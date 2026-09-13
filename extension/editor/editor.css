@@ -1,0 +1,49 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: #f6f8f7; color: #1f2937;
+  font: 14px/1.6 "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+header {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 28px; background: #fff; border-bottom: 1px solid #e5e7eb;
+}
+h1 { font-size: 18px; margin: 0; }
+h1 .sub { font-size: 12px; color: #9ca3af; font-weight: 400; margin-left: 10px; }
+.actions { display: flex; gap: 8px; }
+button {
+  border: 1px solid #d1d5db; background: #fff; border-radius: 8px;
+  padding: 7px 16px; font-size: 13px; cursor: pointer;
+}
+button:hover { background: #f3f4f6; }
+button.primary { background: #16a34a; border-color: #16a34a; color: #fff; font-weight: 600; }
+button.primary:hover { background: #15803d; }
+button.small { padding: 3px 10px; font-size: 12px; }
+button.danger { color: #dc2626; border-color: #fecaca; }
+
+main { max-width: 860px; margin: 20px auto 80px; padding: 0 20px; }
+section.block {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
+  padding: 18px 20px; margin-bottom: 16px;
+}
+section.block > h2 { font-size: 15px; margin: 0 0 12px; color: #15803d; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px 16px; }
+.field label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 3px; }
+.field input, .field textarea {
+  width: 100%; border: 1px solid #d1d5db; border-radius: 8px;
+  padding: 7px 10px; font-size: 13px; font-family: inherit;
+}
+.field input.empty { border-color: #fca5a5; background: #fff7f7; }
+.field textarea { min-height: 90px; resize: vertical; }
+.item {
+  border: 1px dashed #d1d5db; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
+}
+.item-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.item-head span { font-size: 12px; color: #9ca3af; }
+.map-row { display: flex; gap: 8px; margin-bottom: 6px; }
+.map-row input { flex: 1; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 10px; font-size: 13px; }
+#toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: #16a34a; color: #fff; padding: 8px 22px; border-radius: 999px;
+  font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none;
+}

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>网申助手 · 简历快照编辑</title>
+<link rel="stylesheet" href="editor.css">
+</head>
+<body>
+<header>
+  <h1>简历快照 <span class="sub">本地唯一信息源 · 仅此一份，所有服务商共用</span></h1>
+  <div class="actions">
+    <button id="btn-save" class="primary">保存</button>
+    <button id="btn-export">导出 JSON</button>
+    <button id="btn-import">导入 JSON</button>
+    <input type="file" id="file-input" accept=".json" hidden>
+  </div>
+</header>
+<main id="app"></main>
+<script src="../lib/util.js"></script>
+<script src="../lib/schema.js"></script>
+<script src="../lib/store.js"></script>
+<script src="editor.js"></script>
+</body>
+</html>

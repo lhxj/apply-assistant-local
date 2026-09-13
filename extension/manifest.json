@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "网申助手 · 本地版",
+  "version": "0.1.0",
+  "description": "本地简历快照 + 按服务商分层的规则匹配，一键填写网申表单（Moka / 北森 / 牛客 / 通用）。无联网、无登录、无 AI。",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "run_at": "document_idle",
+      "js": [
+        "lib/util.js",
+        "lib/schema.js",
+        "lib/store.js",
+        "content/detect.js",
+        "content/scanner.js",
+        "content/matcher.js",
+        "content/writer.js",
+        "content/learn.js",
+        "content/panel.js",
+        "content/main.js"
+      ],
+      "css": ["content/panel.css"]
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["rules/seed.json", "editor/editor.html", "editor/editor.css", "editor/editor.js", "lib/*.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

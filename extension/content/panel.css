@@ -1,0 +1,82 @@
+/* 网申助手 · 悬浮球与小面板（白 + 绿） */
+#wsz-ball {
+  position: fixed; right: 20px; bottom: 96px; z-index: 2147483646;
+  width: 46px; height: 46px; border-radius: 50%;
+  background: #16a34a; color: #fff; font: 600 18px/46px "PingFang SC", "Microsoft YaHei", sans-serif;
+  text-align: center; cursor: pointer; user-select: none;
+  box-shadow: 0 4px 14px rgba(22, 163, 74, .35);
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+#wsz-ball:hover { transform: scale(1.08); box-shadow: 0 6px 18px rgba(22, 163, 74, .45); }
+
+#wsz-panel {
+  position: fixed; right: 20px; bottom: 152px; z-index: 2147483646;
+  width: 320px; max-height: 70vh; overflow-y: auto;
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, .14);
+  font: 13px/1.6 "PingFang SC", "Microsoft YaHei", sans-serif; color: #1f2937;
+  display: none;
+}
+#wsz-panel.open { display: block; }
+#wsz-panel * { box-sizing: border-box; }
+
+.wsz-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px; border-bottom: 1px solid #f0f0f0;
+  position: sticky; top: 0; background: #fff; border-radius: 14px 14px 0 0;
+}
+.wsz-title { font-weight: 600; font-size: 14px; flex: 1; }
+.wsz-badge {
+  background: #dcfce7; color: #15803d; border-radius: 999px;
+  padding: 1px 10px; font-size: 12px; font-weight: 600;
+}
+.wsz-close { cursor: pointer; color: #9ca3af; font-size: 16px; padding: 0 2px; }
+.wsz-close:hover { color: #4b5563; }
+
+.wsz-body { padding: 12px 14px; }
+.wsz-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.wsz-btn {
+  flex: 1; border: none; border-radius: 9px; padding: 9px 0;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  background: #16a34a; color: #fff; transition: background .15s;
+}
+.wsz-btn:hover { background: #15803d; }
+.wsz-btn:disabled { background: #9ca3af; cursor: not-allowed; }
+.wsz-btn.ghost { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+.wsz-btn.ghost:hover { background: #dcfce7; }
+
+.wsz-progress { height: 6px; background: #f3f4f6; border-radius: 999px; overflow: hidden; margin: 10px 0 4px; display: none; }
+.wsz-progress > div { height: 100%; background: #16a34a; width: 0; transition: width .12s; }
+.wsz-status { color: #6b7280; font-size: 12px; min-height: 18px; }
+
+.wsz-report { margin-top: 8px; }
+.wsz-report h4 { margin: 8px 0 4px; font-size: 12px; color: #374151; }
+.wsz-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; border-radius: 7px; background: #f9fafb; margin-bottom: 4px; font-size: 12px;
+}
+.wsz-item .l { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wsz-item .s { color: #9ca3af; font-size: 11px; }
+.wsz-item .learn {
+  border: 1px solid #bbf7d0; background: #f0fdf4; color: #15803d;
+  border-radius: 6px; padding: 1px 8px; cursor: pointer; font-size: 11px; white-space: nowrap;
+}
+.wsz-item .learn:hover { background: #dcfce7; }
+.wsz-ok { color: #15803d; }
+
+/* 学规则弹层 */
+#wsz-modal {
+  position: fixed; inset: 0; z-index: 2147483647; display: none;
+  background: rgba(0, 0, 0, .35);
+}
+#wsz-modal.open { display: flex; align-items: center; justify-content: center; }
+.wsz-modal-card {
+  width: 360px; max-height: 66vh; background: #fff; border-radius: 14px;
+  display: flex; flex-direction: column; overflow: hidden;
+  font: 13px/1.6 "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.wsz-modal-head { padding: 12px 14px; border-bottom: 1px solid #f0f0f0; font-weight: 600; }
+.wsz-modal-list { overflow-y: auto; padding: 8px; }
+.wsz-modal-list .g { padding: 6px 8px 2px; color: #9ca3af; font-size: 11px; }
+.wsz-modal-list .p { padding: 6px 10px; border-radius: 7px; cursor: pointer; }
+.wsz-modal-list .p:hover { background: #f0fdf4; color: #15803d; }

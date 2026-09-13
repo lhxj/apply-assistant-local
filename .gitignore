@@ -1,0 +1,10 @@
+# 个人数据（快照导出，含敏感信息，严禁提交）
+*.snapshot.json
+wsz-snapshot.json
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
