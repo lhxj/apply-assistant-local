@@ -85,9 +85,8 @@
     return raw.includes(String(p.y)) && (raw.includes(String(p.m)) || raw.includes(month));
   }
 
-  function verifyField(item, merged) {
+  function verifyFieldValue(item, actual, merged) {
     const f = item.field;
-    const actual = NS.readFieldValue(f);
     if (item.kind === "text" || item.kind === "textarea") return String(actual).trim() === String(item.value).trim();
     if (item.kind === "select" || item.kind === "radio") {
       return NS.normalizeLabel(actual) === NS.normalizeLabel(NS.toOptionText(merged, item.value));
@@ -102,12 +101,74 @@
     return false;
   }
 
-  async function verifyStable(item, merged) {
+  function verifyField(item, merged) {
+    return verifyFieldValue(item, NS.readFieldValue(item.field), merged);
+  }
+
+  // Generic Adapter calls these Core hooks; provider Adapters can override the
+  // contract methods without moving the existing write/verify implementation.
+  NS.readControlCore = function (field) {
+    return NS.readFieldValue(field);
+  };
+
+  NS.verifyControlCore = function (field, value, context) {
+    const ctx = context || {};
+    const item = { field, kind: ctx.kind || field.kind, value };
+    const actual = Object.prototype.hasOwnProperty.call(ctx, "actual") ? ctx.actual : NS.readFieldValue(field);
+    return verifyFieldValue(item, actual, ctx.merged || {});
+  };
+
+  NS.writeControlCore = async function (field, value, context) {
+    const ctx = context || {};
+    const kind = ctx.kind || field.kind;
+    const merged = ctx.merged || {};
+    if (kind === "text" || kind === "textarea") {
+      await fillText(field.textControls[0] || field.controls[0], value);
+      return true;
+    }
+    if (kind === "select") {
+      const el = field.selectControls[0];
+      return el.tagName === "SELECT" ? fillNativeSelect(el, NS.toOptionText(merged, value))
+                                      : await fillSelect(el, NS.toOptionText(merged, value));
+    }
+    if (kind === "date") return fillYearMonth(field.selectControls, value);
+    if (kind === "range") return fillRange(field, value);
+    if (kind === "radio") return fillRadio(field.radioControls || [], NS.toOptionText(merged, value));
+    if (kind === "checkbox") {
+      field.checkbox.checked = Boolean(value);
+      NS.emitInputEvents(field.checkbox);
+      return true;
+    }
+    return false;
+  };
+
+  async function verifyWithAdapter(item, merged, opts) {
+    const registry = opts && opts.adapterRegistry;
+    if (!registry) return verifyField(item, merged);
+    const providerKey = (opts && opts.providerKey) || "generic";
+    const context = Object.assign({}, opts, { item, kind: item.kind, merged, providerKey });
+    const actual = await registry.invoke(providerKey, "readControl", [item.field, context]);
+    return Boolean(await registry.invoke(providerKey, "verifyControl", [item.field, item.value, Object.assign({}, context, { actual })]));
+  }
+
+  async function hasExistingValue(field, opts) {
+    const registry = opts && opts.adapterRegistry;
+    if (!registry) return NS.hasValue(field);
+    const providerKey = opts.providerKey || "generic";
+    const context = Object.assign({}, opts, { field, providerKey });
+    const actual = await registry.invoke(providerKey, "readControl", [field, context]);
+    if (actual === undefined) return NS.hasValue(field);
+    if (typeof actual === "boolean") return actual;
+    const text = String(actual == null ? "" : actual).trim();
+    return text.length > 0 && !/^(请选择|请填写|选择|\/|--)$/.test(text);
+  }
+
+  async function verifyStable(item, merged, opts) {
     // 自绘控件可能在 input/change 后异步回写；等待稳定窗口并连续两次回读。
     await NS.sleep(120);
-    const first = verifyField(item, merged);
+    const first = await verifyWithAdapter(item, merged, opts);
     await NS.sleep(120);
-    const second = verifyField(item, merged);
+    const second = await verifyWithAdapter(item, merged, opts);
     return first && second;
   }
 
@@ -118,29 +179,17 @@
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       if (opts && opts.shouldCancel && opts.shouldCancel()) { results.cancelled = true; break; }
-      if (NS.hasValue(it.field)) { results.skipped++; opts && opts.onProgress && opts.onProgress(i, items.length, it, "skip"); continue; }
+      if (await hasExistingValue(it.field, opts)) { results.skipped++; opts && opts.onProgress && opts.onProgress(i, items.length, it, "skip"); continue; }
       let ok = false;
       try {
-        if (it.kind === "text" || it.kind === "textarea") {
-          await fillText(it.field.textControls[0] || it.field.controls[0], it.value);
-          ok = true;
-        } else if (it.kind === "select") {
-          const el = it.field.selectControls[0];
-          ok = el.tagName === "SELECT" ? fillNativeSelect(el, NS.toOptionText(merged, it.value))
-                                       : await fillSelect(el, NS.toOptionText(merged, it.value));
-        } else if (it.kind === "date") {
-          ok = await fillYearMonth(it.field.selectControls, it.value);
-        } else if (it.kind === "range") {
-          ok = await fillRange(it.field, it.value);
-        } else if (it.kind === "radio") {
-          ok = fillRadio(it.field.radioControls || [], NS.toOptionText(merged, it.value));
-        } else if (it.kind === "checkbox") {
-          it.field.checkbox.checked = Boolean(it.value);
-          NS.emitInputEvents(it.field.checkbox);
-          ok = true;
+        const context = Object.assign({}, opts || {}, { item: it, kind: it.kind, merged, providerKey: (opts && opts.providerKey) || "generic" });
+        if (opts && opts.adapterRegistry) {
+          ok = Boolean(await opts.adapterRegistry.invoke(context.providerKey, "writeControl", [it.field, it.value, context]));
+        } else {
+          ok = Boolean(await NS.writeControlCore(it.field, it.value, context));
         }
       } catch (e) { ok = false; }
-      const verified = ok && await verifyStable(it, merged);
+      const verified = ok && await verifyStable(it, merged, opts);
       if (verified) {
         results.filled++;
         results.verified++;

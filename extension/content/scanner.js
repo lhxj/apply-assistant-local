@@ -79,6 +79,9 @@
     return "";
   }
 
+  // Adapter Contract 的兼容入口；不改变现有 scanFields 行为。
+  NS.getGenericFieldContainers = findFieldContainers;
+
   // 保留未归一化标题给少数需要读取单位语义的安全门禁（例如“薪资（元/月）”）。
   // 普通匹配仍使用 label，避免括号注释影响现有 alias。
   function rawLabelOf(container, domCfg) {

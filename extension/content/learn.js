@@ -19,6 +19,13 @@
     return n ? { n: n[1] } : null;
   }
 
+  function itemIndexOf(field) {
+    const descriptorIndex = field && field.repeater && field.repeater.itemIndex;
+    if (Number.isInteger(descriptorIndex)) return descriptorIndex;
+    if (Number.isInteger(field && field.itemIndex)) return field.itemIndex;
+    return Number.isInteger(field && field.index) ? field.index : 0;
+  }
+
   // 从页面读取一个字段的值，返回可写入快照的值
   function captureValue(f) {
     if (f.kind === "select") return selectShownText(f.selectControls[0]);
@@ -60,10 +67,11 @@
       if (path && path.endsWith(".start~end")) {
         const block = path.slice(0, path.indexOf("["));
         snapshot[block] = snapshot[block] || [];
-        snapshot[block][f.index] = snapshot[block][f.index] || {};
+        const itemIndex = itemIndexOf(f);
+        snapshot[block][itemIndex] = snapshot[block][itemIndex] || {};
         if (typeof value === "object") {
-          snapshot[block][f.index].start = value.start || "";
-          snapshot[block][f.index].end = value.end || "";
+          snapshot[block][itemIndex].start = value.start || "";
+          snapshot[block][itemIndex].end = value.end || "";
           updated++;
         }
         continue;
@@ -85,7 +93,7 @@
     for (const f of fields) {
       const block = merged._n.sectionAliases[NS.normalizeLabel(f.section)];
       if (!block || block === "_flat") continue;
-      groupsOnPage[block] = Math.max(groupsOnPage[block] || 0, f.index + 1);
+      groupsOnPage[block] = Math.max(groupsOnPage[block] || 0, itemIndexOf(f) + 1);
     }
     let clicked = false;
     for (const [block, have] of Object.entries(groupsOnPage)) {

@@ -42,6 +42,13 @@
     return rule && typeof rule === "object" ? rule.path : rule;
   }
 
+  function itemIndexOf(field) {
+    const descriptorIndex = field && field.repeater && field.repeater.itemIndex;
+    if (Number.isInteger(descriptorIndex)) return descriptorIndex;
+    if (Number.isInteger(field && field.itemIndex)) return field.itemIndex;
+    return Number.isInteger(field && field.index) ? field.index : 0;
+  }
+
   // Salary aliases retain unit metadata in seed.json. For learned legacy
   // aliases, the label itself remains a conservative fallback guard.
   NS.resolveSalaryRule = function (f, merged) {
@@ -65,7 +72,8 @@
     if (block && block !== "_flat") {
       const alias = (merged._n.scopedAliases[block] || {})[label];
       if (!alias) return null;
-      return alias === "range" ? `${block}[${f.index}].start~end` : canonical(`${block}[${f.index}].${alias}`);
+      const index = itemIndexOf(f);
+      return alias === "range" ? `${block}[${index}].start~end` : canonical(`${block}[${index}].${alias}`);
     }
     if (section && !block) {
       const providerSalary = NS.resolveSalaryRule(f, merged);
@@ -136,7 +144,7 @@
       if (path) {
         if (path.endsWith(".start~end")) {
           const block = path.slice(0, path.indexOf("["));
-          const item = (snapshot[block] || [])[f.index];
+          const item = (snapshot[block] || [])[itemIndexOf(f)];
           if (item && (item.start || item.end)) {
             value = { start: item.start || "", end: item.end || "" };
             kind = "range";
