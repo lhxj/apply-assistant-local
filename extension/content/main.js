@@ -29,7 +29,7 @@
         if (added) { await NS.sleep(500); fields = NS.scanFields(merged.dom); }
       }
 
-      const { plan, unmatched, noData } = NS.buildPlan(fields, merged, snapshot);
+      const { plan, unmatched, noData, manual } = NS.buildPlan(fields, merged, snapshot);
       NS.panel.status(`识别 ${fields.length} 格 · 计划填写 ${plan.length} 格`);
       const results = await NS.executePlan(plan, merged, {
         delayMs: settings.delayMs,
@@ -38,7 +38,7 @@
       });
       NS.panel.report({
         filled: results.filled, skipped: results.skipped, failed: results.failed,
-        unmatched, noData, onLearn: learnRule,
+        unmatched, noData, manual, onLearn: learnRule,
       });
       NS.panel.status(results.cancelled ? "已取消（已填入的内容不会回退，可用「清空表单」）" : "完成");
     } finally {
@@ -55,6 +55,7 @@
     NS.panel.report({
       filled: 0, skipped: 0, failed: [], noData: [],
       unmatched: candidates.map((c) => ({ field: { label: c.label, section: c.section }, reason: "快照候选" })),
+      manual: [],
       onLearn: learnRule,
     });
     NS.panel.status(`已写回快照 ${updated} 项 · ${candidates.length} 项可学规则`);

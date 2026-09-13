@@ -3,9 +3,11 @@
   const NS = (window.__WSZ = window.__WSZ || {});
 
   function setNativeValue(el, value) {
-    const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
-    setter.call(el, value);
+    const proto = el.tagName === "TEXTAREA" ? (typeof HTMLTextAreaElement !== "undefined" && HTMLTextAreaElement.prototype)
+      : (typeof HTMLInputElement !== "undefined" && HTMLInputElement.prototype);
+    const desc = proto && Object.getOwnPropertyDescriptor(proto, "value");
+    if (desc && desc.set) desc.set.call(el, value);
+    else el.value = value;
     NS.emitInputEvents(el);
   }
 
@@ -24,13 +26,17 @@
       const cands = [...document.querySelectorAll(
         '[class*="option"], [class*="Option"], [role="option"], [role="menuitem"], li[class*="item"], [class*="dropdown"] li, [class*="Dropdown"] li'
       )].filter(NS.isVisible);
-      for (const c of cands) {
-        const t = NS.normalizeLabel(c.textContent);
-        if (t === want || (t && want && (t.includes(want) || want.includes(t)) && t.length <= want.length + 6)) {
-          c.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-          c.click();
-          return true;
-        }
+      const matches = cands.filter((c) => NS.normalizeLabel(c.textContent) === want);
+      if (matches.length === 1) {
+        const c = matches[0];
+        c.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+        c.click();
+        return true;
+      }
+      if (matches.length > 1) {
+        // 同名候选无法证明对应关系，宁可跳过，避免误选。
+        document.activeElement && document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        return false;
       }
       await NS.sleep(80);
     }
@@ -53,20 +59,53 @@
   // 原生 <select>
   function fillNativeSelect(el, wantText) {
     const want = NS.normalizeLabel(wantText);
-    const opt = [...el.options].find((o) => {
-      const t = NS.normalizeLabel(o.textContent);
-      return t === want || t.includes(want) || want.includes(t);
-    });
-    if (!opt) return false;
+    const matches = [...el.options].filter((o) => NS.normalizeLabel(o.textContent) === want);
+    if (matches.length !== 1) return false;
+    const opt = matches[0];
     el.value = opt.value;
     NS.emitInputEvents(el);
     return true;
   }
 
+  function fillRadio(controls, wantText) {
+    const want = NS.normalizeLabel(wantText);
+    const matches = controls.filter((el) => NS.normalizeLabel(NS.radioOptionText(el)) === want);
+    if (matches.length !== 1) return false;
+    const target = matches[0];
+    if (!target.checked) target.click();
+    NS.emitInputEvents(target);
+    return Boolean(target.checked);
+  }
+
+  function hasYearMonth(actual, value) {
+    const p = NS.parseYearMonth(value);
+    if (!p) return false;
+    const raw = NS.normalizeLabel(actual).replace(/\s+/g, "");
+    const month = String(Number(p.m));
+    return raw.includes(String(p.y)) && (raw.includes(String(p.m)) || raw.includes(month));
+  }
+
+  function verifyField(item, merged) {
+    const f = item.field;
+    const actual = NS.readFieldValue(f);
+    if (item.kind === "text" || item.kind === "textarea") return String(actual).trim() === String(item.value).trim();
+    if (item.kind === "select" || item.kind === "radio") {
+      return NS.normalizeLabel(actual) === NS.normalizeLabel(NS.toOptionText(merged, item.value));
+    }
+    if (item.kind === "checkbox") return actual === Boolean(item.value);
+    if (item.kind === "date") return hasYearMonth(actual, item.value);
+    if (item.kind === "range") {
+      if (!hasYearMonth(actual, item.value.start)) return false;
+      if (NS.isForever(item.value.end)) return Boolean(f.checkbox && f.checkbox.checked);
+      return hasYearMonth(actual, item.value.end);
+    }
+    return false;
+  }
+
   // 主入口：items = plan；opts {delayMs, autoAddItems, onProgress(i,total,item,ok), shouldCancel()}
   NS.executePlan = async function (items, merged, opts) {
     const delay = (opts && opts.delayMs) ?? 100;
-    const results = { filled: 0, failed: [], skipped: 0 };
+    const results = { filled: 0, verified: 0, failed: [], skipped: 0 };
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       if (opts && opts.shouldCancel && opts.shouldCancel()) { results.cancelled = true; break; }
@@ -84,15 +123,22 @@
           ok = await fillYearMonth(it.field.selectControls, it.value);
         } else if (it.kind === "range") {
           ok = await fillRange(it.field, it.value);
+        } else if (it.kind === "radio") {
+          ok = fillRadio(it.field.radioControls || [], NS.toOptionText(merged, it.value));
         } else if (it.kind === "checkbox") {
           it.field.checkbox.checked = Boolean(it.value);
           NS.emitInputEvents(it.field.checkbox);
           ok = true;
         }
       } catch (e) { ok = false; }
-      if (ok) results.filled++;
-      else results.failed.push({ path: it.path, label: it.field.label, section: it.field.section });
-      opts && opts.onProgress && opts.onProgress(i, items.length, it, ok ? "ok" : "fail");
+      const verified = ok && verifyField(it, merged);
+      if (verified) {
+        results.filled++;
+        results.verified++;
+      } else {
+        results.failed.push({ path: it.path, label: it.field.label, section: it.field.section, reason: ok ? "写后校验失败" : "写入失败" });
+      }
+      opts && opts.onProgress && opts.onProgress(i, items.length, it, verified ? "verified" : "fail");
       await NS.sleep(delay);
     }
     return results;
@@ -100,7 +146,7 @@
 
   async function fillYearMonth(selects, value) {
     const p = NS.parseYearMonth(value);
-    if (!p) return false;
+    if (!p || selects.length < 2) return false;
     const seq = [p.y, p.m];
     let ok = true;
     for (let i = 0; i < Math.min(selects.length, 2); i++) {
@@ -114,7 +160,10 @@
   // 起止时间：年/月/年/月 四下拉 + 至今勾选
   async function fillRange(field, value) {
     const s = NS.parseYearMonth(value.start);
-    if (!s) return false;
+    if (!s || field.selectControls.length < 2) return false;
+    const forever = NS.isForever(value.end);
+    const e = forever ? null : NS.parseYearMonth(value.end);
+    if (!forever && (!e || field.selectControls.length < 4)) return false;
     let ok = true;
     const sels = field.selectControls;
     if (sels.length >= 2) {
@@ -123,14 +172,13 @@
       if (!(await fillSelect(sels[1], s.m))) ok = false;
       await NS.sleep(60);
     }
-    if (NS.isForever(value.end)) {
+    if (forever) {
       if (field.checkbox && !field.checkbox.checked) {
         field.checkbox.click();
         NS.emitInputEvents(field.checkbox);
       }
       return ok;
     }
-    const e = NS.parseYearMonth(value.end);
     if (e && sels.length >= 4) {
       if (!(await fillSelect(sels[2], e.y))) ok = false;
       await NS.sleep(60);
@@ -182,6 +230,8 @@
         } else if (f.kind === "date" || f.kind === "range") {
           for (const s of f.selectControls) { if (!(await clearSelect(s))) ok = false; await NS.sleep(50); }
           if (f.checkbox && f.checkbox.checked) { f.checkbox.click(); NS.emitInputEvents(f.checkbox); }
+        } else if (f.kind === "radio" || f.kind === "file" || f.kind === "unknown") {
+          ok = false;
         }
       } catch (e) { ok = false; }
       if (ok) results.cleared++;

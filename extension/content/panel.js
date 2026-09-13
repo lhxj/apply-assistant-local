@@ -91,11 +91,11 @@
     shouldCancel: () => cancelFlag,
     resetCancel() { cancelFlag = false; },
 
-    // report: {filled, skipped, failed[], unmatched[], noData[], onLearn(field, path)}
+    // report: {filled, skipped, failed[], unmatched[], noData[], manual[], onLearn(field, path)}
     report(r) {
       reportEl.innerHTML = "";
       const okLine = el("div", "wsz-status");
-      okLine.innerHTML = `<span class="wsz-ok">✔ 已填 ${r.filled}</span> · 跳过(已有值) ${r.skipped} · 失败 ${r.failed.length} · 未匹配 ${r.unmatched.length} · 快照无数据 ${r.noData.length}`;
+      okLine.innerHTML = `<span class="wsz-ok">✔ 已验证 ${r.filled}</span> · 跳过(已有值) ${r.skipped} · 失败 ${r.failed.length} · 未匹配 ${r.unmatched.length} · 手动处理 ${ (r.manual || []).length } · 快照无数据 ${r.noData.length}`;
       reportEl.appendChild(okLine);
 
       const addList = (title, arr, render) => {
@@ -117,6 +117,12 @@
         const item = el("div", "wsz-item");
         item.appendChild(el("span", "l", `${f.section || ""} ${f.label}`));
         item.appendChild(el("span", "s", f.path || ""));
+        return item;
+      });
+      addList("手动处理（不会自动上传/勾选/提交）", r.manual || [], (m) => {
+        const item = el("div", "wsz-item");
+        item.appendChild(el("span", "l", `${m.field.section || ""} ${m.field.label || "(无标签)"}`));
+        item.appendChild(el("span", "s miss", m.reason || "请手动确认"));
         return item;
       });
       addList("快照无数据（去「编辑快照」补全）", r.noData, (n) => {

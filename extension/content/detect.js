@@ -2,11 +2,20 @@
 (function () {
   const NS = (window.__WSZ = window.__WSZ || {});
 
+  // 只按完整主机名边界匹配，避免 fake-mokahr.com 这类相似域名误识别。
+  function hostMatchesPattern(host, pattern) {
+    const h = String(host || "").toLowerCase().replace(/\.$/, "");
+    const p = String(pattern || "").toLowerCase().replace(/^\*\./, "").replace(/\.$/, "");
+    return Boolean(h && p) && (h === p || h.endsWith("." + p));
+  }
+
+  NS.hostMatchesPattern = hostMatchesPattern;
+
   // 返回 {key, name}；key 为 null 表示未识别（走通用规则）
   NS.detectProvider = function (rules) {
     const host = location.hostname;
     for (const [key, p] of Object.entries(rules.providers || {})) {
-      if ((p.urlPatterns || []).some((pat) => host.includes(pat))) {
+      if ((p.urlPatterns || []).some((pat) => hostMatchesPattern(host, pat))) {
         return { key, name: p.name || key };
       }
     }

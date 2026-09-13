@@ -2,19 +2,20 @@
 (function () {
   const NS = (window.__WSZ = window.__WSZ || {});
 
-  const CONTROL_SEL = "input:not([type=hidden]):not([type=file]):not([type=submit]):not([type=button]), textarea, select";
+  const CONTROL_SEL = "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]), textarea, select";
+  const FIELD_CONTAINER_SEL = 'div[class*="apply-field-"], div[class*="field-"], div[class*="form-item"], div[class*="FormItem"], div[class*="Recruitment_extPerfect"], li[class*="field-"]';
 
   // 字段容器：含控件、且不再嵌套字段容器的最小块
   function findFieldContainers() {
-    const cands = [...document.querySelectorAll('div[class*="apply-field-"], div[class*="field-"], div[class*="form-item"], div[class*="FormItem"], li[class*="field-"]')];
+    const cands = [...document.querySelectorAll(FIELD_CONTAINER_SEL)];
     const out = [];
     for (const c of cands) {
       const cls = typeof c.className === "string" ? c.className : "";
       if (/fields-|form-items/i.test(cls)) continue; // 列表包装层
       if (!c.querySelector(CONTROL_SEL)) continue;
-      if (c.querySelector('div[class*="apply-field-"] ' + CONTROL_SEL + ", " + 'div[class*="field-"] ' + CONTROL_SEL)) {
+      if (c.querySelector('div[class*="apply-field-"] ' + CONTROL_SEL + ", " + 'div[class*="field-"] ' + CONTROL_SEL + ", " + 'div[class*="Recruitment_extPerfect"] ' + CONTROL_SEL)) {
         // 内部还有更小的字段容器且含控件 -> 让更小的来
-        const inner = c.querySelectorAll('div[class*="apply-field-"], div[class*="field-"]');
+        const inner = c.querySelectorAll('div[class*="apply-field-"], div[class*="field-"], div[class*="Recruitment_extPerfect"]');
         let hasInnerField = false;
         for (const ic of inner) {
           if (ic !== c && ic.querySelector(CONTROL_SEL)) { hasInnerField = true; break; }
@@ -69,6 +70,12 @@
       label = NS.normalizeLabel(el.placeholder);
       if (label && !["请选择", "内容", "请填写"].includes(label) && label.length <= 20) return label;
     }
+    // 北森部分页面的字段标题没有稳定 class：退化到第一个可见、无控件的短文本节点。
+    const textNodes = [...container.querySelectorAll("*")]
+      .filter((n) => NS.isVisible(n) && !n.querySelector(CONTROL_SEL))
+      .map((n) => ({ n, text: NS.normalizeLabel(n.textContent || "") }))
+      .filter(({ text }) => text && text.length <= 20 && !["请选择", "上传文件", "至今"].includes(text));
+    if (textNodes.length) return textNodes[0].text;
     return "";
   }
 
@@ -78,6 +85,34 @@
     return el.getAttribute("role") === "combobox";
   }
 
+  function radioOptionText(el) {
+    const direct = el.getAttribute("aria-label") || el.getAttribute("data-label") || el.getAttribute("title");
+    if (direct) return NS.normalizeLabel(direct);
+    const label = el.closest("label");
+    if (label) return NS.normalizeLabel(label.textContent || "");
+    const parent = el.parentElement;
+    return parent ? NS.normalizeLabel(parent.textContent || "") : "";
+  }
+
+  function shownText(el) {
+    const wrap = el.closest('[class*="Select-"], [class*="Dropdown"], [role="combobox"]') || el.parentElement;
+    const shown = wrap && wrap.querySelector('[class*="display-value"], [class*="selection"], [class*="single-value"], [class*="selected"], [role="combobox"]');
+    let txt = (shown && (shown.textContent || shown.value)) || "";
+    if (!txt && el.tagName === "SELECT") txt = el.options && el.options[el.selectedIndex] ? el.options[el.selectedIndex].textContent : "";
+    if (!txt && el.value) txt = el.value;
+    return NS.normalizeLabel(txt);
+  }
+
+  function isDateSemantic(text) {
+    return /日期|年月|时间|入学|毕业|就读|出生|获奖|开始|结束/.test(text);
+  }
+
+  function isRangeSemantic(text) {
+    return /起止|就读|在校|工作时间|实习时间|项目时间|开始.*结束|结束.*开始|至今/.test(text);
+  }
+
+  NS.radioOptionText = radioOptionText;
+
   // 单字段扫描 -> {container, label, section, index, kind, controls}
   NS.scanFields = function (domCfg) {
     const containers = findFieldContainers();
@@ -86,8 +121,12 @@
     for (const c of containers) {
       if (!NS.isVisible(c)) continue;
       const controls = [...c.querySelectorAll(CONTROL_SEL)].filter((el) => {
-        if (!NS.isVisible(el)) return false;
-        if (el.type === "file") return false;
+        if (!NS.isVisible(el)) {
+          // 许多自绘 radio/file 会把真实 input 隐藏在可见 label/上传容器内，仍需识别。
+          if (el.type !== "radio" && el.type !== "file") return false;
+          const host = el.closest("label") || el.parentElement;
+          if (!host || !NS.isVisible(host)) return false;
+        }
         return true;
       });
       if (!controls.length) continue;
@@ -97,20 +136,25 @@
       const index = seenBySectionLabel[key] || 0;
       seenBySectionLabel[key] = index + 1;
 
-      const inputs = controls.filter((el) => el.tagName !== "SELECT" || true);
       const textControls = controls.filter((el) => !isSelectControl(el) && el.type !== "checkbox" && el.type !== "radio");
       const selectControls = controls.filter((el) => isSelectControl(el));
       const checkbox = controls.find((el) => el.type === "checkbox");
+      const radioControls = controls.filter((el) => el.type === "radio");
+      const fileControls = controls.filter((el) => el.type === "file");
+      const semantic = NS.normalizeLabel(`${section} ${label} ${c.textContent || ""}`);
 
-      let kind = "text";
-      if (selectControls.length >= 4) kind = "range";       // 年月 x 起止
-      else if (selectControls.length >= 2) kind = "date";   // 年月
-      else if (selectControls.length === 1 && textControls.length === 0) kind = "select";
-      // 混合容器（如下拉+真实文本框，例：证件类型+证件号码）按文本处理，只填文本框
-      else if (textControls.length > 0) kind = controls[0].tagName === "TEXTAREA" ? "textarea" : "text";
+      // 默认 unknown。只有语义和控件形态都足够明确时才给出可写类型。
+      let kind = "unknown";
+      if (fileControls.length) kind = "file";
+      else if (radioControls.length) kind = "radio";
       else if (checkbox && controls.length === 1) kind = "checkbox";
+      else if (selectControls.length && isDateSemantic(semantic) && isRangeSemantic(semantic)) kind = "range";
+      else if (selectControls.length && isDateSemantic(semantic)) kind = "date";
+      else if (selectControls.length === 1 && textControls.length === 0) kind = "select";
+      // 混合容器（如下拉+真实文本框）不强行猜测，只在存在明确文本框时处理文本。
+      else if (textControls.length > 0) kind = textControls.some((el) => el.tagName === "TEXTAREA") ? "textarea" : "text";
 
-      fields.push({ container: c, label, section, index, kind, controls, selectControls, textControls, checkbox });
+      fields.push({ container: c, label, section, index, kind, controls, selectControls, textControls, checkbox, radioControls, fileControls });
     }
     return fields;
   };
@@ -119,25 +163,24 @@
   NS.readFieldValue = function (f) {
     if (f.kind === "select") {
       const el = f.selectControls[0];
-      const wrap = el.closest('[class*="Select-"], [class*="Dropdown"]') || el.parentElement;
-      const shown = wrap.querySelector('[class*="display-value"], [class*="selection"], [class*="single-value"]');
-      let txt = (shown && shown.textContent) || "";
-      if (!txt && el.tagName === "SELECT") txt = el.options[el.selectedIndex] ? el.options[el.selectedIndex].textContent : "";
-      txt = txt.trim();
+      const txt = shownText(el);
       return /^(请选择|请填写|选择)$/.test(txt) ? "" : txt;
     }
     if (f.kind === "text" || f.kind === "textarea") {
       return (f.textControls[0] && f.textControls[0].value || "").trim();
     }
     if (f.kind === "date" || f.kind === "range") {
-      const vals = f.selectControls.map((el) => {
-        const wrap = el.closest('[class*="Select-"], [class*="Dropdown"]') || el.parentElement;
-        const shown = wrap.querySelector('[class*="display-value"], [class*="selection"]');
-        return ((shown && shown.textContent) || "").replace(/\s+/g, "");
-      });
+      const vals = f.selectControls.map(shownText);
+      if (!vals.length) return (f.textControls[0] && f.textControls[0].value || "").trim();
+      if (f.kind === "range" && f.checkbox && f.checkbox.checked) vals.push("至今");
       return vals.filter(Boolean).join(" ");
     }
     if (f.kind === "checkbox") return f.checkbox.checked;
+    if (f.kind === "radio") {
+      const checked = f.radioControls.find((el) => el.checked);
+      return checked ? radioOptionText(checked) : "";
+    }
+    if (f.kind === "file") return f.fileControls.some((el) => el.files && el.files.length > 0);
     return "";
   };
 

@@ -45,12 +45,28 @@
     return merged._n.aliases[f.label] || null;
   };
 
-  // fields: scanner 产物；返回 {plan, unmatched, noData}
+  const MANUAL_ONLY_RE = /声明|隐私|提交|同步更新|上传|附件|证件照/;
+
+  function manualReason(f) {
+    if (f.kind === "file") return "文件控件仅允许手动上传";
+    if (MANUAL_ONLY_RE.test(f.label || "")) return "声明/隐私/提交类字段仅允许手动处理";
+    return "控件类型不明确，跳过";
+  }
+
+  // fields: scanner 产物；返回 {plan, unmatched, noData, manual}
   // plan item: {field, kind, path, value}  value 依 kind 而定
   NS.buildPlan = function (fields, merged, snapshot) {
-    const plan = [], unmatched = [], noData = [];
+    const plan = [], unmatched = [], noData = [], manual = [];
     for (const f of fields) {
+      if (f.kind === "file") {
+        manual.push({ field: f, reason: manualReason(f) });
+        continue;
+      }
       if (!f.label) { unmatched.push({ field: f, reason: "无标签" }); continue; }
+      if (MANUAL_ONLY_RE.test(f.label) || f.kind === "unknown") {
+        manual.push({ field: f, reason: manualReason(f) });
+        continue;
+      }
       const path = NS.resolvePath(f, merged);
       let value, kind = f.kind;
 
@@ -74,7 +90,7 @@
       }
       plan.push({ field: f, kind, path, value });
     }
-    return { plan, unmatched, noData };
+    return { plan, unmatched, noData, manual };
   };
 
   // 快照值 -> 页面选项文字（经过 optionValueAliases）

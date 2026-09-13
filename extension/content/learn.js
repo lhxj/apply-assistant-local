@@ -41,6 +41,8 @@
       return { start, end };
     }
     if (f.kind === "checkbox") return f.checkbox.checked;
+    if (f.kind === "radio") return NS.readFieldValue(f);
+    if (f.kind === "file" || f.kind === "unknown") return "";
     return "";
   }
 
@@ -50,6 +52,7 @@
     const candidates = [];
     for (const f of fields) {
       if (!f.label) continue;
+      if (f.kind === "file" || /声明|隐私|提交|同步更新|上传|附件|证件照/.test(f.label)) continue;
       const block = merged._n.sectionAliases[NS.normalizeLabel(f.section)];
       const value = captureValue(f);
       const empty = value == null || value === "" || (typeof value === "object" && !value.start && !value.end);
