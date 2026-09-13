@@ -138,4 +138,57 @@
     }
     return ok;
   }
+
+  async function clearSelect(el) {
+    if (el.tagName === "SELECT") { el.value = ""; NS.emitInputEvents(el); return true; }
+    const wrap = el.closest('[class*="Select-"], [class*="Dropdown"]') || el.parentElement;
+    const dv = wrap.querySelector('[class*="display-value"], [class*="selection"], [class*="single-value"]');
+    const txt = dv ? dv.textContent.trim() : "";
+    if (!txt || /^(请选择|请填写|选择)$/.test(txt)) return true; // 本来就空
+    // 自绘下拉优先找自带的清除按钮（×）
+    const btn = [...wrap.querySelectorAll(
+      '[class*="clear"], [class*="Clear"], [class*="close"], [class*="Close"], [class*="delete"], [class*="Delete"]'
+    )].find((b) => NS.isVisible(b) && b !== dv && !dv.contains(b));
+    if (btn) {
+      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      btn.click();
+      await NS.sleep(80);
+      const after = wrap.querySelector('[class*="display-value"], [class*="selection"]');
+      return !after || !after.textContent.trim() || /^请选择/.test(after.textContent.trim());
+    }
+    return false; // 没有清除按钮，放弃（报告里列出）
+  }
+
+  // 清空表单：把页面上所有已填内容清掉
+  NS.clearForm = async function (fields, opts) {
+    const results = { cleared: 0, failed: [] };
+    const delay = (opts && opts.delayMs) ?? 60;
+    for (let i = 0; i < fields.length; i++) {
+      const f = fields[i];
+      if (opts && opts.shouldCancel && opts.shouldCancel()) { results.cancelled = true; break; }
+      if (!NS.hasValue(f)) { opts && opts.onProgress && opts.onProgress(i, fields.length, f); continue; }
+      let ok = true;
+      try {
+        if (f.kind === "text" || f.kind === "textarea") {
+          const el = f.textControls[0] || f.controls[0];
+          el.scrollIntoView({ block: "center", behavior: "instant" });
+          el.focus();
+          setNativeValue(el, "");
+          el.blur();
+        } else if (f.kind === "checkbox") {
+          if (f.checkbox.checked) { f.checkbox.click(); NS.emitInputEvents(f.checkbox); }
+        } else if (f.kind === "select") {
+          ok = await clearSelect(f.selectControls[0]);
+        } else if (f.kind === "date" || f.kind === "range") {
+          for (const s of f.selectControls) { if (!(await clearSelect(s))) ok = false; await NS.sleep(50); }
+          if (f.checkbox && f.checkbox.checked) { f.checkbox.click(); NS.emitInputEvents(f.checkbox); }
+        }
+      } catch (e) { ok = false; }
+      if (ok) results.cleared++;
+      else results.failed.push({ label: f.label, section: f.section });
+      opts && opts.onProgress && opts.onProgress(i, fields.length, f);
+      await NS.sleep(delay);
+    }
+    return results;
+  };
 })();

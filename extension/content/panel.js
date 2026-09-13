@@ -1,8 +1,9 @@
 /* 网申助手 · 悬浮球面板 UI */
 (function () {
   const NS = (window.__WSZ = window.__WSZ || {});
-  let ball, panel, reportEl, statusEl, progressEl, progressBar, modal;
+  let ball, panel, reportEl, statusEl, progressEl, progressBar, modal, btnFill;
   let cancelFlag = false;
+  let filling = false;
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
@@ -28,21 +29,26 @@
 
       const body = el("div", "wsz-body");
       const row1 = el("div", "wsz-row");
-      const btnFill = el("button", "wsz-btn", "一键填写");
-      btnFill.onclick = () => actions.fill();
+      btnFill = el("button", "wsz-btn", "一键填写");
+      btnFill.onclick = () => {
+        if (filling) { cancelFlag = true; return; }
+        actions.fill();
+      };
       row1.appendChild(btnFill);
 
       const row2 = el("div", "wsz-row");
       const btnSnap = el("button", "wsz-btn ghost", "更新快照");
       btnSnap.onclick = () => actions.capture();
-      const btnEdit = el("button", "wsz-btn ghost", "编辑快照");
-      btnEdit.onclick = () => actions.openEditor();
-      row2.appendChild(btnSnap); row2.appendChild(btnEdit);
+      const btnRules = el("button", "wsz-btn ghost", "更新规则");
+      btnRules.onclick = () => actions.rules();
+      row2.appendChild(btnSnap); row2.appendChild(btnRules);
 
       const row3 = el("div", "wsz-row");
-      const btnCancel = el("button", "wsz-btn ghost", "取消填写");
-      btnCancel.onclick = () => { cancelFlag = true; };
-      row3.appendChild(btnCancel);
+      const btnEdit = el("button", "wsz-btn ghost", "编辑快照");
+      btnEdit.onclick = () => actions.openEditor();
+      const btnClear = el("button", "wsz-btn ghost danger", "清空表单");
+      btnClear.onclick = () => actions.clear();
+      row3.appendChild(btnEdit); row3.appendChild(btnClear);
 
       progressEl = el("div", "wsz-progress");
       progressBar = el("div"); progressEl.appendChild(progressBar);
@@ -66,18 +72,26 @@
       if (b) b.textContent = name;
     },
 
+    setFilling(on) {
+      filling = on;
+      if (btnFill) {
+        btnFill.textContent = on ? "取消填写" : "一键填写";
+        btnFill.classList.toggle("cancel", on);
+      }
+    },
+
     status(text) { if (statusEl) statusEl.textContent = text; },
 
     progress(i, total) {
       if (!progressEl) return;
       progressEl.style.display = total > 0 ? "block" : "none";
-      progressBar.style.width = total ? Math.round(((i + 1) / total) * 100) + "%" : "0";
+      progressBar.style.width = total ? Math.round((i / total) * 100) + "%" : "0";
     },
 
     shouldCancel: () => cancelFlag,
     resetCancel() { cancelFlag = false; },
 
-    // report: {filled, skipped, failed[], unmatched[], noData[], onLearn(field)}
+    // report: {filled, skipped, failed[], unmatched[], noData[], onLearn(field, path)}
     report(r) {
       reportEl.innerHTML = "";
       const okLine = el("div", "wsz-status");
@@ -111,6 +125,35 @@
         item.appendChild(el("span", "s", n.path));
         return item;
       });
+    },
+
+    // 规则管理视图：列出每个格子的当前映射，点击可改
+    // entries: [{field, path|null}]；onLearn(field, path) 学完会重绘
+    showRules(entries, providerName, onLearn) {
+      reportEl.innerHTML = "";
+      reportEl.appendChild(el("h4", null, `规则管理 · ${providerName}（点任意一行改映射）`));
+      for (const { field, path } of entries) {
+        const item = el("div", "wsz-item rule");
+        const label = el("span", "l", `${field.section ? field.section + " · " : ""}${field.label || "(无标签)"}`);
+        item.appendChild(label);
+        const s = el("span", "s" + (path ? "" : " miss"), path || "未匹配");
+        item.appendChild(s);
+        item.onclick = () => NS.panel.openPicker(field, onLearn);
+        reportEl.appendChild(item);
+      }
+    },
+
+    clearReport(r) {
+      reportEl.innerHTML = "";
+      const line = el("div", "wsz-status");
+      line.innerHTML = `<span class="wsz-ok">✔ 已清空 ${r.cleared} 格</span>${r.failed.length ? ` · ${r.failed.length} 格无法自动清空（请手动或刷新页面）` : ""}`;
+      reportEl.appendChild(line);
+      for (const f of r.failed) {
+        const item = el("div", "wsz-item");
+        item.appendChild(el("span", "l", `${f.section || ""} ${f.label}`));
+        item.appendChild(el("span", "s miss", "未清空"));
+        reportEl.appendChild(item);
+      }
     },
 
     // 快照字段树选择器

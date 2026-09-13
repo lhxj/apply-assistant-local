@@ -18,27 +18,32 @@
   async function doFill() {
     await refresh();
     NS.panel.resetCancel();
+    NS.panel.setFilling(true);
     NS.panel.status("扫描表单…");
-    let fields = NS.scanFields(merged.dom);
+    try {
+      let fields = NS.scanFields(merged.dom);
 
-    // 自动补条目（点「添加」）
-    if (settings.autoAddItems) {
-      const added = await NS.ensureItemCount(fields, snapshot, merged, merged.dom);
-      if (added) { await NS.sleep(500); fields = NS.scanFields(merged.dom); }
+      // 自动补条目（点「添加」）
+      if (settings.autoAddItems) {
+        const added = await NS.ensureItemCount(fields, snapshot, merged, merged.dom);
+        if (added) { await NS.sleep(500); fields = NS.scanFields(merged.dom); }
+      }
+
+      const { plan, unmatched, noData } = NS.buildPlan(fields, merged, snapshot);
+      NS.panel.status(`识别 ${fields.length} 格 · 计划填写 ${plan.length} 格`);
+      const results = await NS.executePlan(plan, merged, {
+        delayMs: settings.delayMs,
+        shouldCancel: NS.panel.shouldCancel,
+        onProgress: (i, total) => NS.panel.progress(i + 1, total),
+      });
+      NS.panel.report({
+        filled: results.filled, skipped: results.skipped, failed: results.failed,
+        unmatched, noData, onLearn: learnRule,
+      });
+      NS.panel.status(results.cancelled ? "已取消（已填入的内容不会回退，可用「清空表单」）" : "完成");
+    } finally {
+      NS.panel.setFilling(false);
     }
-
-    const { plan, unmatched, noData } = NS.buildPlan(fields, merged, snapshot);
-    NS.panel.status(`识别 ${fields.length} 格 · 计划填写 ${plan.length} 格`);
-    const results = await NS.executePlan(plan, merged, {
-      delayMs: settings.delayMs,
-      shouldCancel: NS.panel.shouldCancel,
-      onProgress: (i, total) => NS.panel.progress(i + 1, total),
-    });
-    NS.panel.report({
-      filled: results.filled, skipped: results.skipped, failed: results.failed,
-      unmatched, noData, onLearn: learnRule,
-    });
-    NS.panel.status(results.cancelled ? "已取消" : "完成");
   }
 
   async function doCapture() {
@@ -55,6 +60,34 @@
     NS.panel.status(`已写回快照 ${updated} 项 · ${candidates.length} 项可学规则`);
   }
 
+  // 规则管理：列出每个格子的当前映射，点击可改
+  async function doRules() {
+    await refresh();
+    const fields = NS.scanFields(merged.dom);
+    const entries = fields.map((f) => ({ field: f, path: NS.resolvePath(f, merged) }));
+    NS.panel.showRules(entries, provider.name, async (field, path) => {
+      await learnRule(field, path);
+      doRules(); // 学完重绘
+    });
+    NS.panel.status(`本页共 ${fields.length} 格 · 规则归属：${provider.name}${provider.key ? "" : "（通用）"}`);
+  }
+
+  // 清空表单
+  async function doClear() {
+    if (!confirm("确定清空本页表单的全部已填内容？（包括你手动填的，此操作不可撤销）")) return;
+    await refresh();
+    NS.panel.resetCancel();
+    const fields = NS.scanFields(merged.dom);
+    NS.panel.status("清空中…");
+    const results = await NS.clearForm(fields, {
+      delayMs: 60,
+      shouldCancel: NS.panel.shouldCancel,
+      onProgress: (i, total) => NS.panel.progress(i + 1, total),
+    });
+    NS.panel.clearReport(results);
+    NS.panel.status(results.cancelled ? "已取消" : "清空完成");
+  }
+
   // 学规则：选定快照路径后，给当前服务商追加别名
   async function learnRule(field, targetPath) {
     const block = merged._n.sectionAliases[NS.normalizeLabel(field.section)];
@@ -65,7 +98,7 @@
       await NS.store.addAlias(provider.key, null, field.label, targetPath);
     }
     await refresh();
-    NS.panel.status(`已学习：${field.label} → ${targetPath}`);
+    NS.panel.status(`已学习（${provider.name}）：${field.label} → ${targetPath}`);
   }
 
   function openEditor() {
@@ -78,7 +111,7 @@
     provider = NS.detectProvider(probeRules);
     if (!provider.key && !NS.looksLikeApplicationForm()) return;
     await refresh();
-    NS.panel.mount(provider, { fill: doFill, capture: doCapture, openEditor });
+    NS.panel.mount(provider, { fill: doFill, capture: doCapture, rules: doRules, clear: doClear, openEditor });
   }
 
   if (document.readyState === "loading") {

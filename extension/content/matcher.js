@@ -32,35 +32,39 @@
     return merged;
   };
 
+  // 单字段的路径解析（填写计划与规则管理视图共用）
+  // 返回 "basicInfo.name" / "work[0].company" / "work[0].start~end" / null
+  NS.resolvePath = function (f, merged) {
+    if (!f.label) return null;
+    const block = merged._n.sectionAliases[NS.normalizeLabel(f.section)];
+    if (block && block !== "_flat") {
+      const alias = (merged._n.scopedAliases[block] || {})[f.label];
+      if (!alias) return null;
+      return alias === "range" ? `${block}[${f.index}].start~end` : `${block}[${f.index}].${alias}`;
+    }
+    return merged._n.aliases[f.label] || null;
+  };
+
   // fields: scanner 产物；返回 {plan, unmatched, noData}
   // plan item: {field, kind, path, value}  value 依 kind 而定
   NS.buildPlan = function (fields, merged, snapshot) {
     const plan = [], unmatched = [], noData = [];
     for (const f of fields) {
       if (!f.label) { unmatched.push({ field: f, reason: "无标签" }); continue; }
-      const sectionNorm = NS.normalizeLabel(f.section);
-      const block = merged._n.sectionAliases[sectionNorm];
-      let path = null, value, kind = f.kind;
+      const path = NS.resolvePath(f, merged);
+      let value, kind = f.kind;
 
-      if (block && block !== "_flat") {
-        const alias = (merged._n.scopedAliases[block] || {})[f.label];
-        if (alias) {
-          const arr = snapshot[block] || [];
-          const item = arr[f.index];
-          if (alias === "range") {
-            if (item && (item.start || item.end)) {
-              path = `${block}[${f.index}].start~end`;
-              value = { start: item.start || "", end: item.end || "" };
-              kind = "range";
-            }
-          } else {
-            path = `${block}[${f.index}].${alias}`;
-            value = item ? item[alias] : undefined;
+      if (path) {
+        if (path.endsWith(".start~end")) {
+          const block = path.slice(0, path.indexOf("["));
+          const item = (snapshot[block] || [])[f.index];
+          if (item && (item.start || item.end)) {
+            value = { start: item.start || "", end: item.end || "" };
+            kind = "range";
           }
+        } else {
+          value = NS.deepGet(snapshot, path);
         }
-      } else {
-        const target = merged._n.aliases[f.label];
-        if (target) { path = target; value = NS.deepGet(snapshot, target); }
       }
 
       if (!path) { unmatched.push({ field: f, reason: "无匹配规则" }); continue; }

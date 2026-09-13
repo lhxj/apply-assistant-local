@@ -44,6 +44,14 @@
 .wsz-btn:disabled { background: #9ca3af; cursor: not-allowed; }
 .wsz-btn.ghost { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
 .wsz-btn.ghost:hover { background: #dcfce7; }
+.wsz-btn.ghost.danger { color: #b91c1c; border-color: #fecaca; background: #fff; }
+.wsz-btn.ghost.danger:hover { background: #fef2f2; }
+.wsz-btn.cancel { background: #dc2626; }
+.wsz-btn.cancel:hover { background: #b91c1c; }
+
+.wsz-item.rule { cursor: pointer; }
+.wsz-item.rule:hover { background: #f0fdf4; }
+.wsz-item .s.miss { color: #dc2626; }
 
 .wsz-progress { height: 6px; background: #f3f4f6; border-radius: 999px; overflow: hidden; margin: 10px 0 4px; display: none; }
 .wsz-progress > div { height: 100%; background: #16a34a; width: 0; transition: width .12s; }
