@@ -25,7 +25,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["rules/seed.json", "editor/editor.html", "editor/editor.css", "editor/editor.js", "lib/*.js"],
+      "resources": ["rules/seed.json", "rules/seed.v1.json", "editor/editor.html", "editor/editor.css", "editor/editor.js", "lib/*.js"],
       "matches": ["<all_urls>"]
     }
   ]

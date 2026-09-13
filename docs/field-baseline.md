@@ -54,7 +54,7 @@
 | --- | --- | --- |
 | 姓名、手机号码、邮箱、出生日期 | `basicInfo.name`、`basicInfo.phone`、`basicInfo.email`、`basicInfo.birthday` | 个人信息 |
 | 证件号码 | `basicInfo.idNumber` | 证件号码是敏感字段，不从其他字段推断 |
-| 籍贯 | `basicInfo.hukou` | 语义明确；不等同于家庭成员地址 |
+| 籍贯 | 暂不自动映射 | Schema 尚未区分籍贯与户籍所在地，本轮宁可 unmatched |
 | 最高学历、政治面貌 | `basicInfo.highestDegree`、`basicInfo.political` | 下拉选项要求精确候选 |
 | 意向工作地点、意向工作地 | `intent.cities` | 本轮新增低风险 alias |
 | 期望从事职业 | `intent.position` | 本轮新增北森 alias；具体候选仍须页面精确匹配 |
@@ -74,6 +74,7 @@
 | --- | --- | --- | --- |
 | 民族 | 北森 | `basicInfo.nation` | 不自动填写 |
 | 户口所在地、现居住地 | 北森 | 与 `籍贯`、`所在地` 分开，分别建独立字段 | 不把它们合并到现有字段 |
+| 户籍、户籍所在地、籍贯 | 北森 | 在 Schema v2 中拆分为明确字段 | 本轮全部禁用自动映射 |
 | 婚否 | 北森 | `basicInfo.maritalStatus` | 不自动填写 |
 | 英语等级、英语等级成绩、日语等级 | 北森 | `language` 的证书/成绩子字段或独立资格信息 | 不从语言熟练程度推断 |
 | 学习形式 | 北森 | `education[i].studyMode` | 不把它等同于 `是否全日制` |

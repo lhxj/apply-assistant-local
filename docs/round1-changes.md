@@ -38,6 +38,8 @@
   - 北森增加 `zhiye.com` 根域规则。
   - 移除全局 `联系电话` → `basicInfo.phone`。
   - 仅补充少量低风险 alias：Moka“意向工作城市”、北森“意向工作地点/地” → `intent.cities`；北森“期望从事职业” → `intent.position`。
+- `extension/rules/seed.v1.json`
+  - 保存旧版 Seed v1 baseline，仅供迁移时识别“内置规则”与“用户增量”，不作为当前运行 seed。
 - `extension/manifest.json`
   - 版本升至 `0.3.0`。
 - `README.md`
@@ -48,6 +50,35 @@
   - 新增 Excel 字段基线和真实页面结构基线。
 
 `extension/lib/schema.js` 本轮保持不变，避免扩大为 Schema v2。
+
+## Round 1.1 安全补丁
+
+本次补丁基于提交 `cf530424669cc5ef1960d0a2088ebff2c71c2799`，仍只处理 Moka 和北森的安全边界，不实现 Schema v2、平台 Adapter、scopedAnswers、自动提交、自动附件上传或第三平台。
+
+- **未知 section 不再回退全局 alias**：有非空但未识别 section 时，`resolvePath()` 只允许 provider 专属 alias；全局 alias 不再自动匹配。因此“个人信息 / 姓名”仍可映射到 `basicInfo.name`，而“家庭情况 / 姓名”“家庭情况 / 联系电话”以及未知 section 中的其他全局字段均为 unmatched。当前语义不明确的 `籍贯`、`户籍`、`户籍所在地` 也统一暂不自动映射到 `basicInfo.hukou`，并从当前 v2 seed 移除。
+- **自动新增经历硬关闭**：设置默认值为 `autoAddItems = false`，并强制忽略旧设置中的 true；Generic `ensureItemCount()` 不再由 `main.js` 调用。当前只填写页面已经存在的经历块，README 已明确说明需等待第二轮平台 Adapter 验证“添加经历”按钮后再考虑开启。
+- **旧规则迁移改为 baseline diff**：`wsz_rules` 按“完整 Seed v1 + 用户增量”处理，并与 `seed.v1.json` 做差异提取，只写入真正的用户增量到 `wsz_user_rules`。当前 v2 seed 始终优先，因此 v2 已修改或删除的内置规则不会被旧 v1 内容复活；用户规则仍保留在独立层。
+- **写后验证稳定化**：写入后先等待稳定窗口，再连续两次回读；两次均匹配才计入 `verified`。第一次回读正确、随后页面回退的情况会报告 `verify-failed`，不会误报成功。
+
+## Round 1.1 测试结果
+
+执行命令：`node tests/round1.test.js`，结果：`PASS round1 regression tests`。
+
+新增/强化的回归覆盖：
+
+| 测试项 | 结果 |
+| --- | --- |
+| 个人信息 / 姓名仍映射 `basicInfo.name` | PASS |
+| 家庭情况 / 姓名、联系电话不回退全局 alias | PASS |
+| 未识别 section 的其他全局 alias 不自动匹配 | PASS |
+| `籍贯` / `户籍` / `户籍所在地` 暂不自动映射 | PASS |
+| Generic 自动新增经历默认关闭且不执行 | PASS |
+| 完整 Seed v1 + 一个用户规则的真实迁移差异 | PASS |
+| Seed v2 的新增/删除内置规则不被旧 v1 覆盖 | PASS |
+| 连续两次回读；页面回退时 verify-failed | PASS |
+| radio、file manual-only、下拉多候选保护 | PASS |
+
+真实页面端到端填写、添加经历、上传文件、勾选声明/隐私和提交仍未执行。
 
 ## Excel 中的 Moka/北森统计
 

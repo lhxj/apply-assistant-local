@@ -1,11 +1,12 @@
 {
-  "version": 2,
+  "version": 1,
   "global": {
     "aliases": {
       "姓名": "basicInfo.name",
       "性别": "basicInfo.gender",
       "手机号码": "basicInfo.phone",
       "手机号": "basicInfo.phone",
+      "联系电话": "basicInfo.phone",
       "邮箱": "basicInfo.email",
       "电子邮箱": "basicInfo.email",
       "出生日期": "basicInfo.birthday",
@@ -15,6 +16,9 @@
       "身份证号": "basicInfo.idNumber",
       "所在地": "basicInfo.city",
       "现居地": "basicInfo.city",
+      "籍贯": "basicInfo.hukou",
+      "户籍": "basicInfo.hukou",
+      "户籍所在地": "basicInfo.hukou",
       "政治面貌": "basicInfo.political",
       "最高学历": "basicInfo.highestDegree",
       "工作经验": "basicInfo.workYears",
@@ -76,21 +80,15 @@
         "fieldTitle": "[class*=\"filed-title-\"], [class*=\"title-\"]",
         "addButtonText": "添加"
       },
-      "aliases": {
-        "意向工作城市": "intent.cities"
-      },
+      "aliases": {},
       "scopedAliases": {},
       "optionValueAliases": {}
     },
     "beisen": {
       "name": "北森",
-      "urlPatterns": ["zhiye.com", "italent.cn", "beisen.com"],
+      "urlPatterns": ["italent.cn", "beisen.com"],
       "dom": {},
-      "aliases": {
-        "意向工作地点": "intent.cities",
-        "意向工作地": "intent.cities",
-        "期望从事职业": "intent.position"
-      },
+      "aliases": {},
       "scopedAliases": {},
       "optionValueAliases": {}
     },

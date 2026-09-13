@@ -2,6 +2,8 @@
 (function () {
   const NS = (window.__WSZ = window.__WSZ || {});
 
+  const BLOCKED_AMBIGUOUS_LABELS = new Set(["籍贯", "户籍", "户籍所在地"]);
+
   function normMap(obj) {
     const m = {};
     for (const [k, v] of Object.entries(obj || {})) m[NS.normalizeLabel(k)] = v;
@@ -25,6 +27,7 @@
     }
     merged._n = {
       aliases: normMap(merged.aliases),
+      providerAliases: normMap(p.aliases),
       sectionAliases: normMap(merged.sectionAliases),
       optionValueAliases: normMap(merged.optionValueAliases),
       scopedAliases: Object.fromEntries(Object.entries(merged.scopedAliases).map(([b, m]) => [b, normMap(m)])),
@@ -36,12 +39,15 @@
   // 返回 "basicInfo.name" / "work[0].company" / "work[0].start~end" / null
   NS.resolvePath = function (f, merged) {
     if (!f.label) return null;
+    if (BLOCKED_AMBIGUOUS_LABELS.has(NS.normalizeLabel(f.label))) return null;
+    const section = NS.normalizeLabel(f.section);
     const block = merged._n.sectionAliases[NS.normalizeLabel(f.section)];
     if (block && block !== "_flat") {
       const alias = (merged._n.scopedAliases[block] || {})[f.label];
       if (!alias) return null;
       return alias === "range" ? `${block}[${f.index}].start~end` : `${block}[${f.index}].${alias}`;
     }
+    if (section && !block) return merged._n.providerAliases[f.label] || null;
     return merged._n.aliases[f.label] || null;
   };
 

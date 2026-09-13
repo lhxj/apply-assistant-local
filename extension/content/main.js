@@ -23,12 +23,6 @@
     try {
       let fields = NS.scanFields(merged.dom);
 
-      // 自动补条目（点「添加」）
-      if (settings.autoAddItems) {
-        const added = await NS.ensureItemCount(fields, snapshot, merged, merged.dom);
-        if (added) { await NS.sleep(500); fields = NS.scanFields(merged.dom); }
-      }
-
       const { plan, unmatched, noData, manual } = NS.buildPlan(fields, merged, snapshot);
       NS.panel.status(`识别 ${fields.length} 格 · 计划填写 ${plan.length} 格`);
       const results = await NS.executePlan(plan, merged, {

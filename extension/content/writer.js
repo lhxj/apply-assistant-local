@@ -102,6 +102,15 @@
     return false;
   }
 
+  async function verifyStable(item, merged) {
+    // 自绘控件可能在 input/change 后异步回写；等待稳定窗口并连续两次回读。
+    await NS.sleep(120);
+    const first = verifyField(item, merged);
+    await NS.sleep(120);
+    const second = verifyField(item, merged);
+    return first && second;
+  }
+
   // 主入口：items = plan；opts {delayMs, autoAddItems, onProgress(i,total,item,ok), shouldCancel()}
   NS.executePlan = async function (items, merged, opts) {
     const delay = (opts && opts.delayMs) ?? 100;
@@ -131,7 +140,7 @@
           ok = true;
         }
       } catch (e) { ok = false; }
-      const verified = ok && verifyField(it, merged);
+      const verified = ok && await verifyStable(it, merged);
       if (verified) {
         results.filled++;
         results.verified++;
