@@ -36,20 +36,49 @@
     return out;
   }
 
+  function canonicalAliasMap(map) {
+    const out = {};
+    for (const [label, target] of Object.entries(map || {})) {
+      const path = NS.canonicalPath ? NS.canonicalPath(target) : target;
+      if (path) out[label] = path;
+    }
+    return out;
+  }
+
+  function sanitizeUserLayer(raw) {
+    const out = emptyUserRules();
+    const g = (raw && raw.global) || {};
+    out.global.aliases = canonicalAliasMap(g.aliases);
+    out.global.sectionAliases = Object.assign({}, g.sectionAliases || {});
+    out.global.optionValueAliases = Object.assign({}, g.optionValueAliases || {});
+    out.global.scopedAliases = clone(g.scopedAliases || {});
+    for (const [key, p] of Object.entries((raw && raw.providers) || {})) {
+      if (!p || typeof p !== "object") continue;
+      out.providers[key] = {
+        aliases: canonicalAliasMap(p.aliases),
+        sectionAliases: Object.assign({}, p.sectionAliases || {}),
+        optionValueAliases: Object.assign({}, p.optionValueAliases || {}),
+        scopedAliases: clone(p.scopedAliases || {}),
+      };
+    }
+    for (const label of ["联系电话", "籍贯", "户籍", "户籍所在地"]) delete out.global.aliases[label];
+    return out;
+  }
+
   // 旧版规则是 Seed v1 与用户增量的合并体；这里只提取相对 v1 baseline 的差异。
   function userLayerFrom(raw, baseline) {
     const out = emptyUserRules();
     if (!raw || typeof raw !== "object") return out;
     const g = raw.global || {};
     const bg = (baseline && baseline.global) || {};
-    out.global.aliases = diffMap(g.aliases, bg.aliases);
+    out.global.aliases = canonicalAliasMap(diffMap(g.aliases, bg.aliases));
     out.global.sectionAliases = diffMap(g.sectionAliases, bg.sectionAliases);
     out.global.optionValueAliases = diffMap(g.optionValueAliases, bg.optionValueAliases);
     out.global.scopedAliases = diffNested(g.scopedAliases, bg.scopedAliases);
     for (const [key, p] of Object.entries(raw.providers || {})) {
       const bp = (baseline && baseline.providers && baseline.providers[key]) || {};
       const item = {
-        aliases: diffMap((p && p.aliases), bp.aliases),
+        aliases: canonicalAliasMap(diffMap((p && p.aliases), bp.aliases)),
         sectionAliases: diffMap((p && p.sectionAliases), bp.sectionAliases),
         optionValueAliases: diffMap((p && p.optionValueAliases), bp.optionValueAliases),
         scopedAliases: diffNested((p && p.scopedAliases), bp.scopedAliases),
@@ -57,8 +86,7 @@
       if (Object.values(item).some((v) => Object.keys(v || {}).length)) out.providers[key] = item;
     }
     // 这些字段在 v2 中已明确禁用，旧 seed 或旧学习层都不能复活它们。
-    for (const label of ["联系电话", "籍贯", "户籍", "户籍所在地"]) delete out.global.aliases[label];
-    return out;
+    return sanitizeUserLayer(out);
   }
 
   function mergeNested(a, b) {
@@ -105,16 +133,20 @@
     if (!freshSeed) throw new Error("无法加载内置规则");
 
     // 每次加载都以插件内 seed 为准；版本变化时刷新缓存，用户规则仍在独立 key 中。
-    if (!d[K_SEED_RULES] || d[K_SEED_RULES].version !== freshSeed.version) {
+    if (!d[K_SEED_RULES] || d[K_SEED_RULES].version !== freshSeed.version || JSON.stringify(d[K_SEED_RULES]) !== JSON.stringify(freshSeed)) {
       await set({ [K_SEED_RULES]: freshSeed });
     }
     const legacySeed = await loadBundledJson("rules/seed.v1.json", d[K_LEGACY_SEED]);
     if (legacySeed && (!d[K_LEGACY_SEED] || d[K_LEGACY_SEED].version !== legacySeed.version)) {
       await set({ [K_LEGACY_SEED]: legacySeed });
     }
-    const rawUser = d[K_USER_RULES] || d[K_LEGACY_RULES];
-    const user = userLayerFrom(rawUser, legacySeed || {});
-    if (rawUser && (!d[K_USER_RULES] || JSON.stringify(user) !== JSON.stringify(d[K_USER_RULES]))) {
+    const legacyRules = d[K_LEGACY_RULES];
+    const rawUser = d[K_USER_RULES] || legacyRules;
+    // 没有 v1 baseline 时不把 legacy 整体当作用户层，避免旧 seed 误盖当前 seed；保留原 key 等待下次可迁移。
+    const user = d[K_USER_RULES]
+      ? sanitizeUserLayer(d[K_USER_RULES])
+      : legacyRules && legacySeed ? userLayerFrom(legacyRules, legacySeed) : emptyUserRules();
+    if (rawUser && legacySeed && (!d[K_USER_RULES] || JSON.stringify(user) !== JSON.stringify(d[K_USER_RULES]))) {
       await set({ [K_USER_RULES]: user });
     }
     return { seed: freshSeed, user };
@@ -123,10 +155,15 @@
   NS.store = {
     async loadSnapshot() {
       const d = await get(K_SNAP);
-      return d[K_SNAP] || NS.emptySnapshot();
+      const raw = d[K_SNAP];
+      const snapshot = NS.migrateSnapshot ? NS.migrateSnapshot(raw) : (raw || NS.emptySnapshot());
+      if (!raw || JSON.stringify(raw) !== JSON.stringify(snapshot)) await set({ [K_SNAP]: snapshot });
+      return snapshot;
     },
     async saveSnapshot(snap) {
-      await set({ [K_SNAP]: snap });
+      const snapshot = NS.migrateSnapshot ? NS.migrateSnapshot(snap) : snap;
+      await set({ [K_SNAP]: snapshot });
+      return snapshot;
     },
 
     async loadRules() {
@@ -134,8 +171,13 @@
       return mergeRuleLayers(seed, user);
     },
     async saveRules(rules) {
-      const d = await get(K_LEGACY_SEED);
-      await set({ [K_USER_RULES]: userLayerFrom(rules, d[K_LEGACY_SEED] || {}) });
+      let d = await get(K_SEED_RULES);
+      if (!d[K_SEED_RULES]) {
+        await loadSeedAndUser();
+        d = await get(K_SEED_RULES);
+      }
+      if (!d[K_SEED_RULES]) return;
+      await set({ [K_USER_RULES]: userLayerFrom(rules, d[K_SEED_RULES]) });
     },
 
     async loadSettings() {
@@ -149,14 +191,16 @@
     // 给某服务商（或全局）追加一条别名规则
     async addAlias(providerKey, scope, label, targetPath) {
       const { user } = await loadSeedAndUser();
+      const canonicalTarget = NS.canonicalPath ? NS.canonicalPath(targetPath) : targetPath;
+      if (!canonicalTarget) return;
       const bag = providerKey ? (user.providers[providerKey] = user.providers[providerKey] || { aliases: {}, scopedAliases: {} }) : user.global;
       if (scope) {
         bag.scopedAliases = bag.scopedAliases || {};
         bag.scopedAliases[scope] = bag.scopedAliases[scope] || {};
-        bag.scopedAliases[scope][label] = targetPath;
+        bag.scopedAliases[scope][label] = canonicalTarget;
       } else {
         bag.aliases = bag.aliases || {};
-        bag.aliases[label] = targetPath;
+        bag.aliases[label] = canonicalTarget;
       }
       await set({ [K_USER_RULES]: user });
     },

@@ -79,6 +79,25 @@
     return "";
   }
 
+  // 保留未归一化标题给少数需要读取单位语义的安全门禁（例如“薪资（元/月）”）。
+  // 普通匹配仍使用 label，避免括号注释影响现有 alias。
+  function rawLabelOf(container, domCfg) {
+    const titleSel = (domCfg && domCfg.fieldTitle) || '[class*="filed-title-"], [class*="title-"], [class*="field-title"], [class*="label"], label';
+    const t = container.querySelector(titleSel);
+    const raw = t && t.textContent ? t.textContent.trim() : "";
+    if (raw && NS.normalizeLabel(raw).length <= 20) return raw;
+    const el = container.querySelector(CONTROL_SEL);
+    if (el && el.placeholder) {
+      const placeholder = String(el.placeholder).trim();
+      if (placeholder && !["请选择", "内容", "请填写"].includes(NS.normalizeLabel(placeholder)) && NS.normalizeLabel(placeholder).length <= 20) return placeholder;
+    }
+    const textNodes = [...container.querySelectorAll("*")]
+      .filter((n) => NS.isVisible(n) && !n.querySelector(CONTROL_SEL))
+      .map((n) => ({ raw: (n.textContent || "").trim(), text: NS.normalizeLabel(n.textContent || "") }))
+      .filter(({ text }) => text && text.length <= 20 && !["请选择", "上传文件", "至今"].includes(text));
+    return textNodes.length ? textNodes[0].raw : "";
+  }
+
   function isSelectControl(el) {
     if (el.tagName === "SELECT") return true;
     if (el.closest('[class*="Select-"], [class*="select-container"], [class*="Dropdown"]')) return true;
@@ -131,6 +150,7 @@
       });
       if (!controls.length) continue;
       const label = labelOf(c, domCfg);
+      const rawLabel = rawLabelOf(c, domCfg);
       const section = sectionOf(c, domCfg);
       const key = section + "|" + label;
       const index = seenBySectionLabel[key] || 0;
@@ -154,7 +174,7 @@
       // 混合容器（如下拉+真实文本框）不强行猜测，只在存在明确文本框时处理文本。
       else if (textControls.length > 0) kind = textControls.some((el) => el.tagName === "TEXTAREA") ? "textarea" : "text";
 
-      fields.push({ container: c, label, section, index, kind, controls, selectControls, textControls, checkbox, radioControls, fileControls });
+      fields.push({ container: c, label, rawLabel, section, index, kind, controls, selectControls, textControls, checkbox, radioControls, fileControls });
     }
     return fields;
   };

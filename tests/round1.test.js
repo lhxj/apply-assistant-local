@@ -231,7 +231,7 @@ async function testSelectAmbiguity() {
   };
   const field = { kind: "select", label: "学历", section: "个人信息", selectControls: [select], controls: [select] };
   const result = await NS.executePlan(
-    [{ field, kind: "select", path: "basicInfo.highestDegree", value: "本科" }],
+    [{ field, kind: "select", path: "basicInfo.highestEducation", value: "本科" }],
     {},
     { delayMs: 0 },
   );

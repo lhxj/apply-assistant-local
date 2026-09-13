@@ -53,28 +53,20 @@
     for (const f of fields) {
       if (!f.label) continue;
       if (f.kind === "file" || /声明|隐私|提交|同步更新|上传|附件|证件照/.test(f.label)) continue;
-      const block = merged._n.sectionAliases[NS.normalizeLabel(f.section)];
       const value = captureValue(f);
       const empty = value == null || value === "" || (typeof value === "object" && !value.start && !value.end);
       if (empty) continue;
-      let path = null;
-      if (block && block !== "_flat") {
-        const alias = (merged._n.scopedAliases[block] || {})[f.label];
-        if (alias) {
-          if (alias === "range") {
-            snapshot[block] = snapshot[block] || [];
-            snapshot[block][f.index] = snapshot[block][f.index] || {};
-            if (typeof value === "object") {
-              snapshot[block][f.index].start = value.start || "";
-              snapshot[block][f.index].end = value.end || "";
-              updated++;
-            }
-            continue;
-          }
-          path = `${block}[${f.index}].${alias}`;
+      const path = NS.resolvePath(f, merged);
+      if (path && path.endsWith(".start~end")) {
+        const block = path.slice(0, path.indexOf("["));
+        snapshot[block] = snapshot[block] || [];
+        snapshot[block][f.index] = snapshot[block][f.index] || {};
+        if (typeof value === "object") {
+          snapshot[block][f.index].start = value.start || "";
+          snapshot[block][f.index].end = value.end || "";
+          updated++;
         }
-      } else {
-        path = merged._n.aliases[f.label] || null;
+        continue;
       }
       if (path) {
         NS.deepSet(snapshot, path, value);
