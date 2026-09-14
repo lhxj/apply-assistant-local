@@ -342,13 +342,19 @@ async function testLearningTargetScopes() {
 async function testAddItemDisabled() {
   const ctx = loadAdapterContext();
   const registry = ctx.window.__WSZ.adapterRegistry;
-  for (const provider of ["generic", "moka", "beisen"]) {
+  // 自动添加经历仅对已在真实页面验证链路的提供商开启（当前：moka）；
+  // generic / beisen 保持关闭
+  for (const provider of ["generic", "beisen"]) {
     assert.equal(registry.canAddItem(provider, "education"), false, provider);
     assert.equal(registry.canAddItem(provider, "work"), false, provider);
-    assert.equal(registry.findAddButton(provider, {}, {}), null, provider);
   }
+  assert.equal(registry.canAddItem("moka", "education"), true, "moka 已开启教育经历添加");
+  assert.equal(registry.canAddItem("moka", "work"), true, "moka 已开启工作经历添加");
+  assert.equal(registry.findAddButton("generic", {}, {}), null, "generic 不提供添加按钮");
   const main = fs.readFileSync(path.join(ROOT, "extension/content/main.js"), "utf8");
-  assert.doesNotMatch(main, /ensureItemCount/);
+  // 条目补齐只允许经 adapterRegistry.invoke 调用 Adapter 能力，禁止通用启发式
+  assert.doesNotMatch(main, /NS\.ensureItemCount/);
+  assert.match(main, /adapterRegistry\.invoke\(provider\.key \|\| "generic", "ensureItemCount"/);
   assert.match(main, /adapterRegistry\.scanFields/);
   assert.doesNotMatch(main, /NS\.scanFields/);
   assert.match(main, /captureSnapshot[\s\S]*adapterRegistry/);

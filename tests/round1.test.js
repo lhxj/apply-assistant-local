@@ -89,7 +89,10 @@ async function testScannerInvariants() {
 
 async function testAutoAddDisabled() {
   const mainSource = fs.readFileSync(path.join(ROOT, "extension/content/main.js"), "utf8");
-  assert.doesNotMatch(mainSource, /ensureItemCount/);
+  // 条目补齐只允许走平台 Adapter 的 ensureItemCount 能力（提供商自行证明安全），
+  // 禁止回退到 learn.js 里未验证的通用 NS.ensureItemCount 启发式。
+  assert.doesNotMatch(mainSource, /NS\.ensureItemCount/);
+  assert.match(mainSource, /adapterRegistry\.invoke\(provider\.key \|\| "generic", "ensureItemCount"/);
 
   const storage = { wsz_settings: { delayMs: 0, autoAddItems: true } };
   const chrome = {

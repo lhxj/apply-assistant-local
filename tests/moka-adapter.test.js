@@ -380,10 +380,13 @@ function basicBlock(title, ...fields) {
 }
 
 function applyBlock(title, repeatable, ...wrappers) {
+  const addBtn = repeatable ? el("button", { className: `add-btn-${hash()}`, text: "添加" }) : el("span", {});
   const titleNode = el("div", { className: `blockTitle-${hash()}` },
-    el("span", { text: title }),
-    repeatable ? el("button", { className: `add-btn-${hash()}`, text: "添加" }) : el("span", {}));
-  return el("div", { className: `apply-block-${hash()}` }, titleNode, ...wrappers);
+    el("span", { text: title }), addBtn);
+  const block = el("div", { className: `apply-block-${hash()}` }, titleNode, ...wrappers);
+  // 模拟真实页面：点「添加」追加一个空 item
+  block.setItemFactory = (factory) => { addBtn.onClick = () => block.append(factory()); };
+  return block;
 }
 
 function itemWrapper(...fields) {
@@ -412,6 +415,7 @@ function buildFixture() {
   const eduRange2 = rangeField("就读时间");
   const edu2 = itemWrapper(eduRange2.field, stringField("学校名称"), selectField("学历", ["本科", "硕士"]).field);
   const eduBlock = applyBlock("教育背景", true, edu1, edu2);
+  eduBlock.setItemFactory(() => itemWrapper(rangeField("就读时间").field, stringField("学校名称"), selectField("学历", ["本科", "硕士"]).field));
   doc.body.append(eduBlock);
 
   const internRange = rangeField("起止时间");
@@ -711,6 +715,54 @@ function testDisabledFieldsManualOnly(ctx, fixture) {
   assert.equal(plan.plan.length, 0);
 }
 
+async function testRangeNotSkippedAsExisting(ctx, fixture) {
+  const NS = ctx.window.__WSZ;
+  const merged = NS.mergedRules(seed, "moka");
+  const fields = scan(ctx, fixture);
+  // 实习经历的 range 尚未被其他测试写入
+  const range = fields.find((f) => f.label === "起止时间" && f.section === "实习经历");
+  assert.equal(await NS.adapterRegistry.invoke("moka", "readControl", [range, {}]), "", "空 range 必须读为空串（否则被 Core 误判已有值而跳过）");
+  const items = [{ field: range, kind: "range", value: { start: "2022.03", end: "2022.06" }, path: "internship[0].start~end" }];
+  const results = await NS.executePlan(items, merged, { adapterRegistry: NS.adapterRegistry, providerKey: "moka", delayMs: 0 });
+  assert.equal(results.skipped, 0, "空 range 不得被当作已有值跳过");
+  assert.equal(results.filled, 1);
+  assert.equal(results.failed.length, 0);
+}
+
+async function testEnsureItemCount(ctx, fixture) {
+  const NS = ctx.window.__WSZ;
+  const merged = NS.mergedRules(seed, "moka");
+  let fields = scan(ctx, fixture);
+  assert.equal(fields.filter((f) => f.label === "学校名称").length, 2);
+  const snapshot = NS.emptySnapshot();
+  snapshot.education = [{}, {}, {}]; // 快照 3 条，页面 2 条
+  const added = await NS.adapterRegistry.invoke("moka", "ensureItemCount", [fields, snapshot, { mergedRules: merged, document: fixture.doc }]);
+  assert.equal(added, 1, "缺 1 条应点 1 次添加");
+  fields = scan(ctx, fixture);
+  const schools = fields.filter((f) => f.label === "学校名称");
+  assert.equal(schools.length, 3, "添加后重扫应识别 3 条教育经历");
+  assert.equal(JSON.stringify(schools.map((f) => f.repeater.itemIndex)), JSON.stringify([0, 1, 2]));
+  assert.equal(NS.resolvePath(schools[2], merged), "education[2].school");
+  // 条数已够：不再点击
+  const again = await NS.adapterRegistry.invoke("moka", "ensureItemCount", [fields, snapshot, { mergedRules: merged, document: fixture.doc }]);
+  assert.equal(again, 0);
+}
+
+function testAddItemCapabilityAndButton(ctx, fixture) {
+  const NS = ctx.window.__WSZ;
+  const caps = NS.adapterRegistry.get("moka").capabilities.addItem;
+  for (const key of ["education", "work", "internship", "project", "award", "language"]) {
+    assert.equal(caps[key], true, `addItem.${key} 应开启`);
+  }
+  assert.equal(NS.adapterRegistry.canAddItem("moka", "education"), true);
+  // sectionKey 与区块标题两种入参都能定位
+  for (const arg of ["education", "教育背景"]) {
+    const btn = NS.adapterRegistry.findAddButton("moka", arg, { document: fixture.doc });
+    assert.ok(btn && /添加/.test(btn.textContent), `findAddButton(${arg}) 应定位到添加按钮`);
+  }
+  assert.equal(NS.adapterRegistry.findAddButton("moka", "不存在的区块", { document: fixture.doc }), null);
+}
+
 async function testManualOnlyAndAddItem(ctx, fixture) {
   const NS = ctx.window.__WSZ;
   const fields = scan(ctx, fixture);
@@ -723,11 +775,6 @@ async function testManualOnlyAndAddItem(ctx, fixture) {
   assert.equal(await NS.adapterRegistry.invoke("moka", "writeControl", [submit, "x", {}]), false);
   const sync = fields.find((f) => f.safetyRole === "sync");
   assert.equal(await NS.adapterRegistry.invoke("moka", "writeControl", [sync, "x", {}]), false);
-  // addItem 仍关闭
-  const caps = NS.adapterRegistry.get("moka").capabilities.addItem;
-  for (const key of Object.keys(caps)) assert.equal(caps[key], false, `addItem.${key} 必须为 false`);
-  assert.equal(NS.adapterRegistry.canAddItem("moka", "education"), false);
-  assert.equal(NS.adapterRegistry.findAddButton("moka", "education", {}), null);
 }
 
 async function main() {
@@ -742,6 +789,9 @@ async function main() {
   await testCaptureAndClear(ctx, fixture);
   await testSearchComboWriteReadClear(ctx, fixture);
   testDisabledFieldsManualOnly(ctx, fixture);
+  await testRangeNotSkippedAsExisting(ctx, fixture);
+  await testEnsureItemCount(ctx, fixture);
+  testAddItemCapabilityAndButton(ctx, fixture);
   await testManualOnlyAndAddItem(ctx, fixture);
   console.log("PASS Moka real-form adapter tests");
 }

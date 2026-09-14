@@ -68,10 +68,13 @@ sd-Select-menu-* > sd-Select-scrollable-* > sd-Select-common-item-*
 
 - `file_upload`（上传简历）、`confirm_info`（个人声明/更新说明）：manual-only
 - 「保存」提交按钮、「同步更新在线简历」入口：标记 safetyRole，禁止自动处理
-- 自动新增经历：`capabilities.addItem.* = false`（「添加」按钮存在但不自动点）
+- 自动新增经历：`capabilities.addItem.* = true`（education/work/internship/project/award/language），
+  `findAddButton` 定位区块标题行内「添加」按钮，`ensureItemCount` 按快照条数补齐后重扫（已实证）
 
 ## 单元测试
 
 `tests/moka-adapter.test.js` 用 FakeElement 按上述结构构造 fixture（无真实数据），
 覆盖：section 识别、repeater itemIndex 与 DOM 乱序不串项、语义类控件分类、
-下拉唯一/多候选、date/range/至今、capture、clear、manual-only、addItem 关闭、Generic fallback。
+下拉唯一/多候选、date/range/至今、年份虚拟列表输入过滤、搜索下拉写读清、
+禁用控件 manual-only、range 空读不跳已有值、ensureItemCount 添加-重扫、
+capture、clear、manual-only、Generic fallback。

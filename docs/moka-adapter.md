@@ -45,8 +45,24 @@
 | 「保存」提交按钮 | safetyRole: submit |
 | 「同步更新在线简历」 | safetyRole: sync |
 | 验证码 | safetyRole: captcha |
-| 自动新增经历 | `capabilities.addItem.* = false`，`findAddButton()` 返回 null |
+| 自动新增经历 | 已开启（见下「自动添加经历条目」） |
 | 页面 `disabled` 的控件（如基础信息 姓名/手机/邮箱） | 账号级只读，写入必失败；manual-only 转人工 |
+
+## 自动添加经历条目（addItem）
+
+- `capabilities.addItem.* = true`（education / work / internship / project / award / language，同构）。
+- `findAddButton(section|sectionKey)`：定位区块标题行内、文字含「添加」的最深层可见元素。
+- `ensureItemCount(fields, snapshot, ctx)`：快照条数 > 页面条数的 repeater 区块逐次点击「添加」，
+  返回点击次数；找不到按钮的区块诚实跳过。
+- 管线：`doFill` 扫描后、buildPlan 前经 `adapterRegistry.invoke(provider, "ensureItemCount", …)` 调用，
+  有点击则重扫再出计划；不支持的提供商（generic / 北森）返回 `undefined` 自动跳过。
+
+## range 读取契约（与 Core「已有值」判断配套）
+
+Core `hasExistingValue` 用 `String(actual)` 判空：空 range 若返回 `{start:"",end:""}` 会被
+字符串化成 `"[object Object]"` 而永远误判「已有值」→ 全部 range 被跳过（这正是"只有单点日期能填、
+起止时间都填不上"的根因）。因此 moka `readControl` 对**起止皆空**的 range 返回 `""`；
+有任一值时仍返回 `{start, end}` 对象供 verify/capture 使用。
 
 ## 清空（clear）真实页面结论
 
@@ -63,9 +79,16 @@
 
 ## Core Change Request
 
-无。全部需求均在 Adapter Contract 内解决，未修改任何 Core 冻结文件。
-唯一测试侧调整：`tests/adapter-contract.test.js` 空壳期断言
-`moka.writeControl === undefined` 已更新为 `typeof === "function"`（实现落地的必然结果）。
+- `content/main.js`（doFill）：扫描后、buildPlan 前新增 adapter 驱动的条目补齐接线
+  （`adapterRegistry.invoke(provider, "ensureItemCount", …)`，try/catch 不阻塞填写；
+  不支持该方法的提供商经 Generic 回退得到 `undefined`，自动跳过，北森不受影响）。
+- `tests/adapter-contract.test.js`、`tests/round1.test.js` 的政策守卫同步更新：
+  旧政策「autoAdd 全面硬关闭」→ 新政策「仅允许经 adapterRegistry 调用 Adapter 的
+  ensureItemCount 能力；禁止回退 learn.js 未验证的通用 `NS.ensureItemCount` 启发式；
+  generic/北森 capabilities 仍为 false；`store.js` 的 `settings.autoAddItems=false`
+  硬关闭保留（该设置对应旧 Generic 路径，与新 Adapter 能力互不相关）」。
+- 此前轮次：`tests/adapter-contract.test.js` 空壳期断言
+  `moka.writeControl === undefined` 已更新为 `typeof === "function"`（实现落地的必然结果）。
 
 ## 测试
 
@@ -86,6 +109,10 @@ fixture 为 FakeElement 构造，无个人数据；真实页面结构证据见 `
   38 字段识别一致；「教育背景 · 学校名称」搜索下拉写入「华中科技大学」成功（回读/验证一致），
   hover 唤出 × 后清空成功；「基础信息 · 邮箱」确认为 `disabled`，分类 manualOnly、写入拒绝；
   起止年月 range 写入-回读-验证通过；实验残留值已通过 × 清空与刷新（未保存）全部还原。
+- 2026-09-14，博世 Moka 表单 addItem + range 管线验证：
+  `ensureItemCount`（快照 2 条 / 页面 1 条教育经历）点击「添加」1 次，重扫识别 2 条（itemIndex 0/1）；
+  range 经 `executePlan` 完整管线（含已有值跳过判断 + 写后双回读）filled=1 / skipped=0 / failed=0。
+  空 range 误跳根因（`String({start:"",end:""})` → `"[object Object]"` 被 Core 判为已有值）随本轮修复。
 - 排障经验：后台/被冻结标签页中 `setTimeout` 会被浏览器节流甚至完全暂停，
   依赖 `sleep` 的写入链会表现得像"卡死"。真实使用场景是用户在当前标签页主动点击插件，
   标签页处于前台，不受影响；做 WebBridge 远程验证时可先 `Page.bringToFront` 激活标签页，

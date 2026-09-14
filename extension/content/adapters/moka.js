@@ -468,6 +468,9 @@
       let end = "";
       if (forever) end = "至今";
       else if (parts[2]) end = parts[3] ? normalizeYM(`${parts[2]}.${parts[3]}`) : parts[2];
+      // Core 的「已有值」判断基于字符串：空 range 若返回对象会被 String() 成
+      // "[object Object]" 而永远误判已有值导致跳过——空值必须返回空串
+      if (!start && !end) return "";
       return { start, end };
     }
     if (kind === "day") {
@@ -680,9 +683,10 @@
   const moka = {
     key: "moka",
     capabilities: {
+      // 「添加」按钮定位与点击-重扫链路已在真实页面验证（教育/工作/实习/项目/获奖/语言 同构）
       addItem: {
-        education: false, work: false, internship: false, project: false,
-        award: false, language: false,
+        education: true, work: true, internship: true, project: true,
+        award: true, language: true,
       },
     },
 
@@ -787,12 +791,60 @@
       return false;
     },
 
-    // 「添加」按钮真实存在，但自动新增经历保持关闭（capabilities.addItem.* = false），
-    // 待后续轮次证明点击-重扫-写后验证链路后再开启。
-    findAddButton() {
-      return null;
+    // 「添加」按钮：定位到对应区块标题行内、文字含「添加」的最深可点元素
+    findAddButton(section, context) {
+      const label = typeof section === "string" ? section : (section && section.label) || "";
+      if (!label) return null;
+      // 允许传 sectionKey（如 "education"）或区块标题（如 "教育背景"）
+      const def = SECTION_BY_LABEL[normalize(label)] || SECTION_DEFS.find((d) => d.key === normalize(label));
+      return findAddButtonForSection(def ? def.label : label, context || {});
+    },
+
+    // 条目补齐：快照条数 > 页面条数的 repeater 区块，逐次点击「添加」。
+    // 返回点击次数；调用方负责在 >0 时重新扫描。不支持的区块/找不到按钮诚实跳过。
+    async ensureItemCount(fields, snapshot, context) {
+      const ctx = context || {};
+      if (!docOf(ctx) || !snapshot || typeof snapshot !== "object") return 0;
+      const have = {};
+      for (const f of fields || []) {
+        const key = f.sectionKey;
+        if (!key || key === "_flat" || !moka.capabilities.addItem[key]) continue;
+        const idx = f.repeater && Number.isInteger(f.repeater.itemIndex) ? f.repeater.itemIndex : 0;
+        have[key] = Math.max(have[key] || 0, idx + 1);
+      }
+      let clicked = 0;
+      for (const def of SECTION_DEFS) {
+        if (!def.repeatable || !moka.capabilities.addItem[def.key]) continue;
+        const need = Array.isArray(snapshot[def.key]) ? snapshot[def.key].length : 0;
+        const gap = need - (have[def.key] || 0);
+        if (gap <= 0) continue;
+        const btn = findAddButtonForSection(def.label, ctx);
+        if (!btn) continue;
+        for (let i = 0; i < gap; i++) {
+          dispatchClick(btn);
+          clicked++;
+          if (NS.sleep) await NS.sleep(400);
+        }
+      }
+      return clicked;
     },
   };
+
+  // 区块标题行内的「添加」按钮（剔除标题文本自身，取最深层匹配元素）
+  function findAddButtonForSection(sectionLabel, context) {
+    const doc = docOf(context);
+    if (!doc) return null;
+    for (const block of qsa(doc, BLOCK_SEL)) {
+      const titleEl = first(block, BLOCK_TITLE_SEL);
+      // 用 canonicalSection 归并（长标题前缀匹配），与区块识别保持一致
+      const def = canonicalSection(titleText(titleEl));
+      if (!def || def.label !== sectionLabel) continue;
+      const cands = qsa(titleEl, "button, a, span, div").filter((el) => isVisible(el) && /添加/.test(textOf(el)));
+      const leaves = cands.filter((c) => !cands.some((o) => o !== c && contains(c, o)));
+      if (leaves.length) return leaves[0];
+    }
+    return null;
+  }
 
   NS.mokaFormState = formEvidence;
   NS.adapterDefinitions.moka = moka;
