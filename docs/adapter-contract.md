@@ -62,7 +62,7 @@ Registry 对同步结构方法使用 `invokeSync()`。如果 Provider 错误地�
 
 Provider Adapter 不应修改全局 `NS` 的匹配规则，也不应绕过 Core 的写后双回读验证。
 
-`NS.adapterRegistry.get("moka")` 返回空壳；`get("beisen")` 返回真实样本确认的保守实现。未知 key 返回 Generic。可以使用 `register(adapter)` 添加未来的 Provider 实现。Beisen Adapter 只有在 `/form`、`.form-item`/`.form-item__text`/`.form-item__control` 与 Phoenix/生成表单证据同时满足时才进入表单扫描；zhiye.com 的职位详情页不会被当成填报页。
+`NS.adapterRegistry.get("moka")` 返回空壳；`get("beisen")` 返回真实样本确认的保守实现。未知 key 返回 Generic。可以使用 `register(adapter)` 添加未来的 Provider 实现。Core 的 `detect.js` 只根据 hostname 返回 provider；Beisen Adapter 自己在 `formEvidence()`/`scanFields()` 中检查 `/form`、`.form-item`/`.form-item__text`/`.form-item__control` 与 Phoenix/生成表单证据。证据不足时返回空字段列表，不把职位详情页交给 Generic 自动填写。
 
 ## FieldDescriptor
 
@@ -100,6 +100,8 @@ Generic 保留当前通用 scanner 结果的字段级行为：控件分类、读
 当前主流程统一通过 `adapterRegistry.scanFields()` 获取并规范化扫描结果，不再直接调用 `NS.scanFields()`。填写、读取和验证通过 Registry 传给 Writer；更新 Snapshot 的读取通过 `adapterRegistry.captureControl()` 传给 learn.js；清空通过 `adapterRegistry.clearControl()` 传给 Writer。Matcher 仍负责 Schema/canonical path，Writer 仍负责节奏、控件动作和至少两次稳定回读。
 
 Generic 的 `captureControl()` 保留现有 `captureValue()` 行为；Generic 的 `clearControl()` 保留通用安全清空能力。`file`、`unknown` 和其他不支持的 kind 返回失败，不会被计为已清空。空壳 Moka 不实现这些方法，自动回退 Generic；Beisen 对本样本确认的 Phoenix text/textarea/select/date/radio/checkbox 提供 provider-first 处理，file、声明、提交、验证码仍 manual-only。
+
+`manualOnly === true` 是 Matcher 的第一优先级安全门：字段直接进入 `manual`，不会解析 alias、读取 Snapshot 或进入 `plan`。可选的 `manualReason` 优先作为人工原因；缺失时使用通用原因。该能力适用于所有 Provider，不是 Beisen 专属规则。
 
 `container`、控件动作和页面读取只存在运行时。Provider 可以返回自己的 FieldDescriptor，但不得把 DOM Element 或运行时 context 写入 storage。
 

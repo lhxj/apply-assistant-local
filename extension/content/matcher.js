@@ -42,11 +42,26 @@
     return rule && typeof rule === "object" ? rule.path : rule;
   }
 
-  function itemIndexOf(field) {
-    const descriptorIndex = field && field.repeater && field.repeater.itemIndex;
-    if (Number.isInteger(descriptorIndex)) return descriptorIndex;
-    if (Number.isInteger(field && field.itemIndex)) return field.itemIndex;
-    return Number.isInteger(field && field.index) ? field.index : 0;
+  function repeaterBlockOf(field, merged) {
+    const section = NS.normalizeLabel(field && field.section);
+    const sectionAliases = merged && merged._n && merged._n.sectionAliases || {};
+    const configured = sectionAliases[section];
+    if (configured && configured !== "_flat") return configured;
+    const canonical = field && field.sectionKey;
+    const scopedAliases = merged && merged._n && merged._n.scopedAliases || {};
+    return canonical && Object.prototype.hasOwnProperty.call(scopedAliases, canonical) ? canonical : null;
+  }
+
+  function itemIndexOf(field, merged) {
+    const repeater = field && field.repeater;
+    if (repeater && Object.prototype.hasOwnProperty.call(repeater, "itemIndex")) {
+      return Number.isInteger(repeater.itemIndex) && repeater.itemIndex >= 0 ? repeater.itemIndex : null;
+    }
+    // A known repeater must have a provider-confirmed item index. The legacy
+    // `field.index` means label occurrence, not repeater identity.
+    if (repeaterBlockOf(field, merged)) return null;
+    if (Number.isInteger(field && field.itemIndex) && field.itemIndex >= 0) return field.itemIndex;
+    return Number.isInteger(field && field.index) && field.index >= 0 ? field.index : 0;
   }
 
   // Salary aliases retain unit metadata in seed.json. For learned legacy
@@ -72,7 +87,8 @@
     if (block && block !== "_flat") {
       const alias = (merged._n.scopedAliases[block] || {})[label];
       if (!alias) return null;
-      const index = itemIndexOf(f);
+      const index = itemIndexOf(f, merged);
+      if (index == null) return null;
       return alias === "range" ? `${block}[${index}].start~end` : canonical(`${block}[${index}].${alias}`);
     }
     if (section && !block) {
@@ -115,6 +131,7 @@
   const MANUAL_ONLY_RE = /声明|隐私|提交|同步更新|上传|附件|证件照/;
 
   function manualReason(f) {
+    if (f.manualReason) return f.manualReason;
     if (f.kind === "file") return "文件控件仅允许手动上传";
     if (MANUAL_ONLY_RE.test(f.label || "")) return "声明/隐私/提交类字段仅允许手动处理";
     return "控件类型不明确，跳过";
@@ -125,6 +142,10 @@
   NS.buildPlan = function (fields, merged, snapshot) {
     const plan = [], unmatched = [], noData = [], manual = [];
     for (const f of fields) {
+      if (f.manualOnly === true) {
+        manual.push({ field: f, reason: manualReason(f) });
+        continue;
+      }
       if (f.kind === "file") {
         manual.push({ field: f, reason: manualReason(f) });
         continue;
@@ -144,7 +165,7 @@
       if (path) {
         if (path.endsWith(".start~end")) {
           const block = path.slice(0, path.indexOf("["));
-          const item = (snapshot[block] || [])[itemIndexOf(f)];
+          const item = (snapshot[block] || [])[itemIndexOf(f, merged)];
           if (item && (item.start || item.end)) {
             value = { start: item.start || "", end: item.end || "" };
             kind = "range";
