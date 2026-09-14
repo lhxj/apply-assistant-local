@@ -216,7 +216,8 @@ async function testCanonicalRules() {
   loadScript("extension/content/matcher.js", ctx);
   const NS = ctx.window.__WSZ;
   const merged = NS.mergedRules(seed, "beisen");
-  assert.equal(NS.resolvePath({ label: "学历", section: "教育经历", index: 0 }, merged), "education[0].educationLevel");
+  assert.equal(NS.resolvePath({ label: "学历", section: "教育经历", repeater: { itemIndex: 0, itemElement: {} }, index: 0 }, merged), "education[0].educationLevel");
+  assert.equal(NS.resolvePath({ label: "学历", section: "教育经历", repeater: { itemIndex: null, itemElement: null }, index: 0 }, merged), null);
   assert.equal(NS.resolvePath({ label: "最高学历", section: "个人信息", index: 0 }, merged), "basicInfo.highestEducation");
   assert.equal(NS.resolvePath({ label: "期望薪资", section: "求职意向", index: 0 }, merged), "intent.expectedSalary.amount");
   assert.equal(NS.resolvePath({ label: "当前薪资", section: "求职意向", index: 0 }, merged), "intent.currentSalary.amount");

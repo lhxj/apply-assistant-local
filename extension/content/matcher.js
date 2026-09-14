@@ -42,11 +42,26 @@
     return rule && typeof rule === "object" ? rule.path : rule;
   }
 
-  function itemIndexOf(field) {
-    const descriptorIndex = field && field.repeater && field.repeater.itemIndex;
-    if (Number.isInteger(descriptorIndex)) return descriptorIndex;
-    if (Number.isInteger(field && field.itemIndex)) return field.itemIndex;
-    return Number.isInteger(field && field.index) ? field.index : 0;
+  function repeaterBlockOf(field, merged) {
+    const section = NS.normalizeLabel(field && field.section);
+    const sectionAliases = merged && merged._n && merged._n.sectionAliases || {};
+    const configured = sectionAliases[section];
+    if (configured && configured !== "_flat") return configured;
+    const canonical = field && field.sectionKey;
+    const scopedAliases = merged && merged._n && merged._n.scopedAliases || {};
+    return canonical && Object.prototype.hasOwnProperty.call(scopedAliases, canonical) ? canonical : null;
+  }
+
+  function itemIndexOf(field, merged) {
+    const repeater = field && field.repeater;
+    if (repeater && Object.prototype.hasOwnProperty.call(repeater, "itemIndex")) {
+      return Number.isInteger(repeater.itemIndex) && repeater.itemIndex >= 0 ? repeater.itemIndex : null;
+    }
+    // A known repeater must have a provider-confirmed item index. The legacy
+    // `field.index` means label occurrence, not repeater identity.
+    if (repeaterBlockOf(field, merged)) return null;
+    if (Number.isInteger(field && field.itemIndex) && field.itemIndex >= 0) return field.itemIndex;
+    return Number.isInteger(field && field.index) && field.index >= 0 ? field.index : 0;
   }
 
   // Salary aliases retain unit metadata in seed.json. For learned legacy
@@ -65,14 +80,23 @@
   NS.resolvePath = function (f, merged) {
     if (!f.label) return null;
     const label = NS.normalizeLabel(f.label);
-    if (BLOCKED_AMBIGUOUS_LABELS.has(label)) return null;
     const section = NS.normalizeLabel(f.section);
     const block = merged._n.sectionAliases[NS.normalizeLabel(f.section)];
+    const providerAlias = merged._n.providerAliases[label];
     const canonical = (path) => NS.canonicalPath ? NS.canonicalPath(path) : path;
+
+    // Ambiguous location labels remain blocked unless the active provider has
+    // an explicit alias in a known flat section. This keeps the Beisen
+    // `个人信息 / 籍贯` rule narrow without restoring a global guess.
+    const providerAmbiguousOverride = block === "_flat"
+      && section === NS.normalizeLabel("个人信息")
+      && providerAlias;
+    if (BLOCKED_AMBIGUOUS_LABELS.has(label) && !providerAmbiguousOverride) return null;
     if (block && block !== "_flat") {
       const alias = (merged._n.scopedAliases[block] || {})[label];
       if (!alias) return null;
-      const index = itemIndexOf(f);
+      const index = itemIndexOf(f, merged);
+      if (index == null) return null;
       return alias === "range" ? `${block}[${index}].start~end` : canonical(`${block}[${index}].${alias}`);
     }
     if (section && !block) {
@@ -115,9 +139,22 @@
   const MANUAL_ONLY_RE = /声明|隐私|提交|同步更新|上传|附件|证件照/;
 
   function manualReason(f) {
+    if (f.manualReason) return f.manualReason;
     if (f.kind === "file") return "文件控件仅允许手动上传";
     if (MANUAL_ONLY_RE.test(f.label || "")) return "声明/隐私/提交类字段仅允许手动处理";
     return "控件类型不明确，跳过";
+  }
+
+  function defaultValueOf(field) {
+    if (!field || typeof field !== "object") return undefined;
+    if (Object.prototype.hasOwnProperty.call(field, "defaultValue")) return field.defaultValue;
+    if (Object.prototype.hasOwnProperty.call(field, "defaultAnswer")) return field.defaultAnswer;
+    return undefined;
+  }
+
+  function hasDefaultValue(field) {
+    const value = defaultValueOf(field);
+    return value !== undefined && value !== null && String(value).trim() !== "";
   }
 
   // fields: scanner 产物；返回 {plan, unmatched, noData, manual}
@@ -125,6 +162,10 @@
   NS.buildPlan = function (fields, merged, snapshot) {
     const plan = [], unmatched = [], noData = [], manual = [];
     for (const f of fields) {
+      if (f.manualOnly === true) {
+        manual.push({ field: f, reason: manualReason(f) });
+        continue;
+      }
       if (f.kind === "file") {
         manual.push({ field: f, reason: manualReason(f) });
         continue;
@@ -141,10 +182,18 @@
       }
       let value, kind = f.kind;
 
+      // Provider-scoped defaults are intentionally pathless. They are still
+      // ordinary plan items, so the Writer can apply its existing-value guard
+      // and the normal stable double-read verification.
+      if (!path && hasDefaultValue(f)) {
+        plan.push({ field: f, kind, path: null, value: defaultValueOf(f), defaultAnswer: true });
+        continue;
+      }
+
       if (path) {
         if (path.endsWith(".start~end")) {
           const block = path.slice(0, path.indexOf("["));
-          const item = (snapshot[block] || [])[itemIndexOf(f)];
+          const item = (snapshot[block] || [])[itemIndexOf(f, merged)];
           if (item && (item.start || item.end)) {
             value = { start: item.start || "", end: item.end || "" };
             kind = "range";
@@ -156,6 +205,10 @@
 
       if (!path) { unmatched.push({ field: f, reason: "无匹配规则" }); continue; }
       if (value == null || value === "" || (typeof value === "object" && !value.start && !value.end)) {
+        if (hasDefaultValue(f)) {
+          plan.push({ field: f, kind, path, value: defaultValueOf(f), defaultAnswer: true });
+          continue;
+        }
         noData.push({ field: f, path });
         continue;
       }

@@ -118,6 +118,20 @@ async function testUnknownManualAndEmptyProviderShells() {
   assert.equal(result.plan.length, 0);
   assert.equal(result.manual.length, 1);
 
+  const explicitlyManual = {
+    label: "姓名",
+    rawLabel: "姓名",
+    section: "个人信息",
+    kind: "text",
+    manualOnly: true,
+    manualReason: "平台要求人工确认",
+    controls: [],
+  };
+  const manualPlan = NS.buildPlan([explicitlyManual], merged, { basicInfo: { name: "不应自动填写" } });
+  assert.equal(manualPlan.plan.length, 0);
+  assert.equal(manualPlan.manual.length, 1);
+  assert.equal(manualPlan.manual[0].reason, "平台要求人工确认");
+
   const personal = { label: "姓名", rawLabel: "姓名", section: "个人信息", kind: "text", index: 0, controls: [] };
   const moka = NS.adapterRegistry.normalizeField(personal, { providerKey: "moka", mergedRules: merged });
   const beisen = NS.adapterRegistry.normalizeField(personal, { providerKey: "beisen", mergedRules: merged });

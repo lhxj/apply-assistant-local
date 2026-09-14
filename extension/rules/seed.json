@@ -104,7 +104,8 @@
       "aliases": {
         "意向工作地点": "intent.cities",
         "意向工作地": "intent.cities",
-        "期望从事职业": "intent.position"
+        "期望从事职业": "intent.position",
+        "籍贯": "basicInfo.nativePlace"
       },
       "sectionAliases": {
         "技能": "skills",
@@ -112,14 +113,14 @@
       },
       "scopedAliases": {
         "education": { "开始时间": "start", "结束时间": "end" },
-        "internship": { "开始时间": "start", "结束时间": "end" },
+        "internship": { "单位名称": "company", "职位名称": "title", "开始时间": "start", "结束时间": "end", "实习内容": "desc" },
         "project": { "职务": "role", "开始时间": "start", "结束时间": "end" },
         "award": { "获奖项": "name", "获奖时间": "date", "获奖级别": "level", "获奖描述": "description" },
         "work": { "开始时间": "start", "结束时间": "end" },
         "skills": { "技能名称": "name", "掌握程度": "level", "使用时间总计": "duration", "技能描述": "description" },
         "certificates": { "证书名称": "name", "获得时间": "date", "证书描述": "description" }
       },
-      "optionValueAliases": {}
+      "optionValueAliases": { "省级": "省区级" }
     },
     "nowcoder": {
       "name": "牛客",

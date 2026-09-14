@@ -56,11 +56,12 @@ async function testMatchingSafety() {
   const phoneForReferrer = { label: "联系电话", section: "推荐人", index: 0, kind: "text" };
   assert.equal(ctx.window.__WSZ.resolvePath(phoneInFamily, merged), null);
   assert.equal(ctx.window.__WSZ.resolvePath(phoneForReferrer, merged), null);
-  for (const label of ["籍贯", "户籍", "户籍所在地"]) {
+  assert.equal(ctx.window.__WSZ.resolvePath({ label: "籍贯", section: "个人信息", index: 0, kind: "select" }, merged), "basicInfo.nativePlace");
+  for (const label of ["户籍", "户籍所在地"]) {
     assert.equal(ctx.window.__WSZ.resolvePath({ label, section: "个人信息", index: 0, kind: "select" }, merged), null);
   }
-
   const mokaMerged = ctx.window.__WSZ.mergedRules(seed, "moka");
+  assert.equal(ctx.window.__WSZ.resolvePath({ label: "籍贯", section: "个人信息", index: 0, kind: "select" }, mokaMerged), null);
   assert.equal(
     ctx.window.__WSZ.resolvePath({ label: "意向工作城市", section: "未知区块", index: 0, kind: "select" }, mokaMerged),
     "intent.cities",

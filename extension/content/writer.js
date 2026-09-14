@@ -157,7 +157,14 @@
     const providerKey = opts.providerKey || "generic";
     const context = Object.assign({}, opts, { field, providerKey });
     const actual = await registry.invoke(providerKey, "readControl", [field, context]);
-    if (field.readStateUnknown && actual == null) return true;
+    // A provider-scoped default is the one deliberate exception: an empty
+    // custom control may have no readable state before interaction. Other
+    // unreadable controls remain protected and are treated as existing.
+    if (field.readStateUnknown && actual == null) {
+      const hasDefault = (Object.prototype.hasOwnProperty.call(field, "defaultValue") && field.defaultValue != null && String(field.defaultValue).trim() !== "")
+        || (Object.prototype.hasOwnProperty.call(field, "defaultAnswer") && field.defaultAnswer != null && String(field.defaultAnswer).trim() !== "");
+      return !hasDefault;
+    }
     if (actual === undefined) return NS.hasValue(field);
     if (typeof actual === "boolean") return actual;
     const text = String(actual == null ? "" : actual).trim();
