@@ -235,14 +235,19 @@
 
   function repeaterFor(element, context, sectionInfo) {
     const group = sectionInfo.group || groupOf(element);
-    const sectionKey = (context && context.sectionKey) || sectionInfo.sectionKey;
+    const requestedSectionKey = context && context.sectionKey;
+    if (requestedSectionKey && requestedSectionKey !== sectionInfo.sectionKey) {
+      return { itemIndex: null, itemElement: null };
+    }
+    const sectionKey = requestedSectionKey || sectionInfo.sectionKey;
     const definition = SECTION_BY_LABEL[sectionInfo.section];
     if (!group || !definition || !definition.repeatable || !sectionKey || sectionKey === "_flat") {
       return { itemIndex: null, itemElement: null };
     }
     const doc = docOf(context);
     const groups = groupsForSection(doc, sectionInfo.section);
-    const itemIndex = Math.max(0, groups.indexOf(group));
+    const itemIndex = groups.indexOf(group);
+    if (itemIndex < 0) return { itemIndex: null, itemElement: null };
     return { itemIndex, itemElement: group };
   }
 
@@ -267,6 +272,8 @@
       required: requiredOf(labels.titleNode, labels.rawLabel),
       confidence: kind === "unknown" ? 0.25 : 0.95,
       confidenceReason: "真实样本确认的 .form-item / label / control 结构",
+      manualOnly: kind === "file",
+      manualReason: kind === "file" ? "文件控件仅允许手动上传" : undefined,
       textControls: parts.textControls,
       selectComponents: parts.selectComponents,
       selectControls: parts.selectControls,
@@ -292,6 +299,7 @@
       confidence: 0.95,
       confidenceReason: "真实样本确认的安全边界控件",
       manualOnly: true,
+      manualReason: "Adapter 标记为 manual-only",
     }, extra || {});
   }
 
@@ -317,6 +325,7 @@
     return safetyDescriptor("声明", "声明", "checkbox", checkbox, {
       checkbox,
       safetyRole: "declaration",
+      manualReason: "声明/隐私类字段仅允许手动处理",
     });
   }
 
@@ -347,6 +356,7 @@
         fileControls: [file],
         manualOnly: true,
         safetyRole: "file",
+        manualReason: "文件控件仅允许手动上传",
       }));
     }
     return out;
@@ -359,7 +369,10 @@
     });
     if (!button) return null;
     covered.add(button);
-    return safetyDescriptor(normalize(textOf(button)), "提交", "unknown", button, { safetyRole: "submit" });
+    return safetyDescriptor(normalize(textOf(button)), "提交", "unknown", button, {
+      safetyRole: "submit",
+      manualReason: "提交类控件仅允许手动处理",
+    });
   }
 
   function captchaDescriptor(doc, covered) {
@@ -370,7 +383,10 @@
     });
     if (!input) return null;
     covered.add(input);
-    return safetyDescriptor("验证码", "安全校验", "unknown", input, { safetyRole: "captcha" });
+    return safetyDescriptor("验证码", "安全校验", "unknown", input, {
+      safetyRole: "captcha",
+      manualReason: "验证码仅允许手动处理",
+    });
   }
 
   function formEvidence(context) {
@@ -569,6 +585,7 @@
     },
 
     getFieldContainers(context) {
+      if (formEvidence(context || {}).status !== "BEISEN_FORM_CONFIRMED") return [];
       const doc = docOf(context);
       return qsa(doc, FORM_ITEM_SELECTOR).filter(isVisible);
     },

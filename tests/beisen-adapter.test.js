@@ -279,14 +279,15 @@ function makeContext(fixture) {
 function testPlatformEvidenceAndBoundaries(ctx, fixture) {
   const NS = ctx.window.__WSZ;
   assert.equal(NS.detectProvider(seed).key, "beisen");
-  assert.equal(NS.detectProviderState(seed).status, "BEISEN_FORM_CONFIRMED");
+  assert.equal(NS.beisenFormState({ document: fixture.doc, location: ctx.location }).status, "BEISEN_FORM_CONFIRMED");
   ctx.location.pathname = "/job/detail";
-  assert.equal(NS.detectProviderState(seed).status, "BEISEN_SITE_NON_FORM");
+  assert.equal(NS.beisenFormState({ document: fixture.doc, location: ctx.location }).status, "BEISEN_SITE_NON_FORM");
   ctx.location.pathname = "/form";
   ctx.location.hostname = "fake-zhiye.com";
   assert.equal(NS.detectProvider(seed).key, null);
+  assert.equal(NS.beisenFormState({ document: fixture.doc, location: ctx.location }).status, "BEISEN_UNCERTAIN");
   ctx.location.hostname = "flyaitalent.zhiye.com";
-  assert.equal(NS.detectProviderState(seed).status, "BEISEN_FORM_CONFIRMED");
+  assert.equal(NS.beisenFormState({ document: fixture.doc, location: ctx.location }).status, "BEISEN_FORM_CONFIRMED");
   assert.equal(fixture.doc.querySelectorAll(".form-item").length, 8);
 }
 
@@ -316,6 +317,38 @@ function testScanIdentityAndSafety(ctx, fixture) {
   const plan = NS.buildPlan(fields.filter((field) => field.kind === "file" || field.safetyRole === "submit" || field.safetyRole === "declaration"), merged, NS.emptySnapshot());
   assert.equal(plan.plan.length, 0);
   assert.equal(plan.manual.length, 4);
+}
+
+function testRepeaterSafetyAndCoreBoundary(ctx, fixture) {
+  const NS = ctx.window.__WSZ;
+  const merged = NS.mergedRules(seed, "beisen");
+  const educationItem = fixture.educationOne.querySelector(".form-item");
+  const wrongSection = NS.adapterRegistry.invoke("beisen", "getRepeaterItem", [educationItem, { sectionKey: "work" }]);
+  assert.equal(wrongSection.itemIndex, null);
+  assert.equal(wrongSection.itemElement, null);
+
+  const detachedGroup = el("div", { className: "form", id: "fixture_Recruitment_extPerfect_detached" });
+  const detachedItem = formItem("学校名称", input());
+  detachedGroup.append(detachedItem);
+  const missingGroup = NS.adapterRegistry.invoke("beisen", "getRepeaterItem", [detachedItem, { sectionKey: "education" }]);
+  assert.equal(missingGroup.itemIndex, null);
+  assert.equal(missingGroup.itemElement, null);
+
+  const unresolved = {
+    label: "学校名称",
+    section: "教育经历",
+    sectionKey: "education",
+    repeater: { itemIndex: null, itemElement: null },
+    index: 0,
+    kind: "text",
+  };
+  assert.equal(NS.resolvePath(unresolved, merged), null);
+  assert.equal(NS.buildPlan([unresolved], merged, { education: [{ school: "不应读取" }] }).plan.length, 0);
+
+  const detectSource = fs.readFileSync(path.join(ROOT, "extension/content/detect.js"), "utf8");
+  const mainSource = fs.readFileSync(path.join(ROOT, "extension/content/main.js"), "utf8");
+  assert.doesNotMatch(detectSource, /BEISEN_FORM_CONFIRMED|BEISEN_SITE_NON_FORM|phoenix|Recruitment_extPerfect|\/form/);
+  assert.doesNotMatch(mainSource, /provider\.key\s*===\s*["']beisen["']|BEISEN_|phoenix|\/form/);
 }
 
 async function testProviderReadWriteVerifyAndCapture(ctx, fixture) {
@@ -384,6 +417,7 @@ async function main() {
   ctx.location.hostname = "flyaitalent.zhiye.com";
   ctx.location.pathname = "/form";
   testScanIdentityAndSafety(ctx, fixture);
+  testRepeaterSafetyAndCoreBoundary(ctx, fixture);
   await testProviderReadWriteVerifyAndCapture(ctx, fixture);
   await testFallbackAndNonFormIsolation(ctx, fixture);
   console.log("PASS Beisen real-form adapter tests");
