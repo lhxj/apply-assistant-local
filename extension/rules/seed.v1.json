@@ -1,11 +1,12 @@
 {
-  "version": 2,
+  "version": 1,
   "global": {
     "aliases": {
       "姓名": "basicInfo.name",
       "性别": "basicInfo.gender",
       "手机号码": "basicInfo.phone",
       "手机号": "basicInfo.phone",
+      "联系电话": "basicInfo.phone",
       "邮箱": "basicInfo.email",
       "电子邮箱": "basicInfo.email",
       "出生日期": "basicInfo.birthday",
@@ -13,16 +14,20 @@
       "证件类型": "basicInfo.idType",
       "证件号码": "basicInfo.idNumber",
       "身份证号": "basicInfo.idNumber",
-      "民族": "basicInfo.ethnicity",
-      "所在地": "basicInfo.currentLocation",
-      "现居地": "basicInfo.currentLocation",
-      "现居住地": "basicInfo.currentLocation",
-      "政治面貌": "basicInfo.politicalStatus",
-      "婚姻状况": "basicInfo.maritalStatus",
-      "婚否": "basicInfo.maritalStatus",
-      "最高学历": "basicInfo.highestEducation",
+      "所在地": "basicInfo.city",
+      "现居地": "basicInfo.city",
+      "籍贯": "basicInfo.hukou",
+      "户籍": "basicInfo.hukou",
+      "户籍所在地": "basicInfo.hukou",
+      "政治面貌": "basicInfo.political",
+      "最高学历": "basicInfo.highestDegree",
       "工作经验": "basicInfo.workYears",
       "工作年限": "basicInfo.workYears",
+      "最近公司": "basicInfo.recentCompany",
+      "当前薪资": "intent.currentSalary",
+      "目前薪资": "intent.currentSalary",
+      "期望薪资": "intent.salary",
+      "期望月薪": "intent.salary",
       "期望城市": "intent.cities",
       "期望工作地点": "intent.cities",
       "意向城市": "intent.cities",
@@ -32,13 +37,6 @@
       "自我评价": "selfEval",
       "个人简介": "selfEval",
       "简介": "selfEval"
-    },
-    "salaryAliases": {
-      "期望薪资": { "path": "intent.expectedSalary.amount" },
-      "期望月薪": { "path": "intent.expectedSalary.amount", "period": "month" },
-      "期望年薪": { "path": "intent.expectedSalary.amount", "period": "year" },
-      "当前薪资": { "path": "intent.currentSalary.amount" },
-      "目前薪资": { "path": "intent.currentSalary.amount" }
     },
     "sectionAliases": {
       "基础信息": "_flat",
@@ -62,9 +60,9 @@
       "work": { "公司名称": "company", "公司": "company", "职位名称": "title", "职位": "title", "岗位": "title", "工作职责": "desc", "工作内容": "desc", "工作描述": "desc", "起止时间": "range", "工作时间": "range" },
       "internship": { "公司名称": "company", "公司": "company", "职位名称": "title", "职位": "title", "岗位": "title", "工作职责": "desc", "工作内容": "desc", "实习内容": "desc", "起止时间": "range", "实习时间": "range" },
       "project": { "项目名称": "name", "项目": "name", "职责": "role", "项目角色": "role", "项目描述": "desc", "项目中职责": "resp", "项目职责": "resp", "起止时间": "range", "项目时间": "range" },
-      "education": { "学校名称": "school", "学校": "school", "院校": "school", "专业名称": "major", "专业": "major", "学历": "educationLevel", "学位": "degreeName", "学位名称": "degreeName", "就读时间": "range", "在校时间": "range", "学习形式": "studyMode", "是否全日制": "fulltime", "GPA": "gpa", "GPA满分": "gpaScale", "成绩排名": "rank", "排名": "rank" },
+      "education": { "学校名称": "school", "学校": "school", "院校": "school", "专业名称": "major", "专业": "major", "学历": "degree", "就读时间": "range", "在校时间": "range", "是否全日制": "fulltime", "成绩排名": "rank", "排名": "rank" },
       "language": { "语言类型": "lang", "语言": "lang", "掌握程度": "level", "熟练程度": "level", "听说": "listening", "读写": "reading" },
-      "award": { "奖项名称": "name", "奖项": "name", "奖励名称": "name", "获奖时间": "date", "获奖日期": "date", "获奖级别": "level", "获奖描述": "description" }
+      "award": { "奖项名称": "name", "奖项": "name", "奖励名称": "name", "获奖时间": "date", "获奖日期": "date" }
     },
     "optionValueAliases": {
       "advanced": "熟练",
@@ -82,21 +80,15 @@
         "fieldTitle": "[class*=\"filed-title-\"], [class*=\"title-\"]",
         "addButtonText": "添加"
       },
-      "aliases": {
-        "意向工作城市": "intent.cities"
-      },
+      "aliases": {},
       "scopedAliases": {},
       "optionValueAliases": {}
     },
     "beisen": {
       "name": "北森",
-      "urlPatterns": ["zhiye.com", "italent.cn", "beisen.com"],
+      "urlPatterns": ["italent.cn", "beisen.com"],
       "dom": {},
-      "aliases": {
-        "意向工作地点": "intent.cities",
-        "意向工作地": "intent.cities",
-        "期望从事职业": "intent.position"
-      },
+      "aliases": {},
       "scopedAliases": {},
       "optionValueAliases": {}
     },

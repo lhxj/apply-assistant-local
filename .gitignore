@@ -2,6 +2,9 @@
 *.snapshot.json
 wsz-snapshot.json
 
+# 本地网申样本（含投递链接参数，不上传公开仓库）
+docs/网申字段填写模板_三平台.xlsx
+
 # 系统/编辑器
 .DS_Store
 Thumbs.db

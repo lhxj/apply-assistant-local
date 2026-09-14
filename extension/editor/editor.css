@@ -29,12 +29,16 @@ section.block {
 section.block > h2 { font-size: 15px; margin: 0 0 12px; color: #15803d; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px 16px; }
 .field label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 3px; }
-.field input, .field textarea {
+.field input, .field textarea, .field select {
   width: 100%; border: 1px solid #d1d5db; border-radius: 8px;
   padding: 7px 10px; font-size: 13px; font-family: inherit;
 }
 .field input.empty { border-color: #fca5a5; background: #fff7f7; }
 .field textarea { min-height: 90px; resize: vertical; }
+.notice {
+  margin: 0 0 16px; padding: 10px 14px; border: 1px solid #fcd34d;
+  border-radius: 10px; background: #fffbeb; color: #92400e;
+}
 .item {
   border: 1px dashed #d1d5db; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
 }

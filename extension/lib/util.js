@@ -39,6 +39,24 @@
     cur[keys[keys.length - 1]] = value;
   };
 
+  // Schema v2 canonical paths. Old aliases/rules are accepted at the boundary,
+  // but the rest of the extension only reads and writes the v2 paths.
+  NS.canonicalPath = function (path) {
+    if (!path) return null;
+    let p = String(path);
+    if (p === "basicInfo.hukou" || p === "legacy" || p.startsWith("legacy.")) return null;
+    const flat = {
+      "basicInfo.city": "basicInfo.currentLocation",
+      "basicInfo.political": "basicInfo.politicalStatus",
+      "basicInfo.highestDegree": "basicInfo.highestEducation",
+      "intent.salary": "intent.expectedSalary.amount",
+      "intent.currentSalary": "intent.currentSalary.amount",
+    };
+    if (flat[p]) return flat[p];
+    p = p.replace(/^(education\[\d+\])\.degree$/, "$1.educationLevel");
+    return p;
+  };
+
   NS.sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // 触发框架可感知的事件序列

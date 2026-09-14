@@ -1,4 +1,4 @@
-/* 网申助手 · 快照编辑器 */
+/* 网申助手 · 快照编辑器（由 Schema 驱动） */
 (function () {
   const NS = window.__WSZ;
   let snap;
@@ -12,22 +12,55 @@
     setTimeout(() => (t.style.opacity = 0), 1600);
   }
 
-  function makeInput(path, label, value, isTextarea) {
+  function descriptorOf(descriptor) {
+    if (descriptor === true) return { inputType: "textarea" };
+    return descriptor || {};
+  }
+
+  function makeInput(path, label, value, descriptor) {
+    const cfg = descriptorOf(descriptor);
     const wrap = document.createElement("div");
     wrap.className = "field";
     const lab = document.createElement("label");
     lab.textContent = label;
-    const el = document.createElement(isTextarea ? "textarea" : "input");
-    el.value = value || "";
+    const tag = cfg.inputType === "textarea" ? "textarea" : cfg.inputType === "select" ? "select" : "input";
+    const el = document.createElement(tag);
+    if (tag === "select") {
+      for (const option of cfg.options || []) {
+        const opt = document.createElement("option");
+        opt.value = option.value;
+        opt.textContent = option.label;
+        el.appendChild(opt);
+      }
+    }
+    const initial = value == null ? (cfg.defaultValue !== undefined ? cfg.defaultValue : "") : value;
+    el.value = String(initial);
     el.dataset.path = path;
-    if (!el.value) el.classList.add("empty");
-    el.oninput = () => el.classList.toggle("empty", !el.value);
+    if (!el.value && tag !== "select") el.classList.add("empty");
+    const updateEmpty = () => el.classList.toggle("empty", !el.value && tag !== "select");
+    el.oninput = updateEmpty;
+    el.onchange = updateEmpty;
     wrap.append(lab, el);
     return wrap;
   }
 
+  function schemaPath(block, field) {
+    return NS.schemaFieldPath ? NS.schemaFieldPath(block, field) : `${block.key}.${field.key}`;
+  }
+
+  function migrationNotice() {
+    if (!snap.legacy || !Object.prototype.hasOwnProperty.call(snap.legacy, "hukou")) return null;
+    const note = document.createElement("p");
+    note.className = "notice";
+    note.textContent = "旧版“籍贯/户籍”存在历史值，请手动确认应该填入“籍贯”还是“户籍所在地”。";
+    return note;
+  }
+
   function render() {
     app.innerHTML = "";
+    const note = migrationNotice();
+    if (note) app.appendChild(note);
+
     for (const b of NS.SCHEMA) {
       const sec = document.createElement("section");
       sec.className = "block";
@@ -39,11 +72,12 @@
         const grid = document.createElement("div");
         grid.className = "grid";
         for (const f of b.fields) {
-          grid.appendChild(makeInput(`${b.key}.${f.key}`, f.label, (snap[b.key] || {})[f.key]));
+          const path = schemaPath(b, f);
+          grid.appendChild(makeInput(path, f.label, NS.deepGet(snap, path), f));
         }
         sec.appendChild(grid);
       } else if (b.type === "array") {
-        const arr = snap[b.key] = snap[b.key] || [];
+        const arr = snap[b.key] = Array.isArray(snap[b.key]) ? snap[b.key] : [];
         arr.forEach((item, i) => {
           const box = document.createElement("div");
           box.className = "item";
@@ -60,7 +94,8 @@
           const grid = document.createElement("div");
           grid.className = "grid";
           for (const f of b.fields) {
-            grid.appendChild(makeInput(`${b.key}[${i}].${f.key}`, f.label, item[f.key], f.key === "desc" || f.key === "resp"));
+            const path = `${b.key}[${i}].${f.key}`;
+            grid.appendChild(makeInput(path, f.label, NS.deepGet(snap, path), f));
           }
           box.appendChild(grid);
           sec.appendChild(box);
@@ -68,10 +103,14 @@
         const add = document.createElement("button");
         add.className = "small";
         add.textContent = `＋ 添加${b.title}`;
-        add.onclick = () => { arr.push({}); render(); };
+        add.onclick = () => {
+          arr.push({});
+          snap = NS.migrateSnapshot(snap);
+          render();
+        };
         sec.appendChild(add);
       } else if (b.type === "text") {
-        sec.appendChild(makeInput(b.key, b.title, snap[b.key], true));
+        sec.appendChild(makeInput(b.key, b.title, snap[b.key], { inputType: "textarea" }));
       } else if (b.type === "map") {
         const map = snap[b.key] = snap[b.key] || {};
         Object.keys(map).forEach((k) => {
@@ -103,14 +142,13 @@
   }
 
   function collect() {
-    for (const el of app.querySelectorAll("[data-path]")) {
-      NS.deepSet(snap, el.dataset.path, el.value);
-    }
+    for (const el of app.querySelectorAll("[data-path]")) NS.deepSet(snap, el.dataset.path, el.value);
+    snap = NS.migrateSnapshot(snap);
   }
 
   document.getElementById("btn-save").onclick = async () => {
     collect();
-    await NS.store.saveSnapshot(snap);
+    snap = await NS.store.saveSnapshot(snap);
     toast("已保存");
   };
 
@@ -131,7 +169,7 @@
     try {
       const data = JSON.parse(await file.text());
       const replace = confirm("「确定」= 替换整个快照；「取消」= 合并进当前快照");
-      snap = replace ? Object.assign(NS.emptySnapshot(), data) : mergeDeep(snap, data);
+      snap = NS.migrateSnapshot(replace ? data : mergeDeep(snap, data));
       await NS.store.saveSnapshot(snap);
       render();
       toast("已导入");

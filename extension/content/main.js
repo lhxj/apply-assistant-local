@@ -15,30 +15,36 @@
     NS.panel.setProvider(provider.name);
   }
 
+  function scanFields() {
+    return NS.adapterRegistry.scanFields(provider.key || "generic", {
+      provider,
+      rules,
+      mergedRules: merged,
+      domConfig: merged.dom,
+      document,
+    });
+  }
+
   async function doFill() {
     await refresh();
     NS.panel.resetCancel();
     NS.panel.setFilling(true);
     NS.panel.status("扫描表单…");
     try {
-      let fields = NS.scanFields(merged.dom);
+      const fields = scanFields();
 
-      // 自动补条目（点「添加」）
-      if (settings.autoAddItems) {
-        const added = await NS.ensureItemCount(fields, snapshot, merged, merged.dom);
-        if (added) { await NS.sleep(500); fields = NS.scanFields(merged.dom); }
-      }
-
-      const { plan, unmatched, noData } = NS.buildPlan(fields, merged, snapshot);
+      const { plan, unmatched, noData, manual } = NS.buildPlan(fields, merged, snapshot);
       NS.panel.status(`识别 ${fields.length} 格 · 计划填写 ${plan.length} 格`);
       const results = await NS.executePlan(plan, merged, {
         delayMs: settings.delayMs,
+        adapterRegistry: NS.adapterRegistry,
+        providerKey: provider.key || "generic",
         shouldCancel: NS.panel.shouldCancel,
         onProgress: (i, total) => NS.panel.progress(i + 1, total),
       });
       NS.panel.report({
         filled: results.filled, skipped: results.skipped, failed: results.failed,
-        unmatched, noData, onLearn: learnRule,
+        unmatched, noData, manual, onLearn: learnRule,
       });
       NS.panel.status(results.cancelled ? "已取消（已填入的内容不会回退，可用「清空表单」）" : "完成");
     } finally {
@@ -49,12 +55,19 @@
   async function doCapture() {
     await refresh();
     NS.panel.status("抓取页面内容…");
-    const fields = NS.scanFields(merged.dom);
-    const { updated, candidates } = await NS.captureSnapshot(fields, merged, snapshot);
+    const fields = scanFields();
+    const { updated, candidates } = await NS.captureSnapshot(fields, merged, snapshot, {
+      adapterRegistry: NS.adapterRegistry,
+      providerKey: provider.key || "generic",
+      provider,
+      rules,
+      document,
+    });
     await NS.store.saveSnapshot(snapshot);
     NS.panel.report({
       filled: 0, skipped: 0, failed: [], noData: [],
       unmatched: candidates.map((c) => ({ field: { label: c.label, section: c.section }, reason: "快照候选" })),
+      manual: [],
       onLearn: learnRule,
     });
     NS.panel.status(`已写回快照 ${updated} 项 · ${candidates.length} 项可学规则`);
@@ -63,7 +76,7 @@
   // 规则管理：列出每个格子的当前映射，点击可改
   async function doRules() {
     await refresh();
-    const fields = NS.scanFields(merged.dom);
+    const fields = scanFields();
     const entries = fields.map((f) => ({ field: f, path: NS.resolvePath(f, merged) }));
     NS.panel.showRules(entries, provider.name, async (field, path) => {
       await learnRule(field, path);
@@ -77,10 +90,12 @@
     if (!confirm("确定清空本页表单的全部已填内容？（包括你手动填的，此操作不可撤销）")) return;
     await refresh();
     NS.panel.resetCancel();
-    const fields = NS.scanFields(merged.dom);
+    const fields = scanFields();
     NS.panel.status("清空中…");
     const results = await NS.clearForm(fields, {
       delayMs: 60,
+      adapterRegistry: NS.adapterRegistry,
+      providerKey: provider.key || "generic",
       shouldCancel: NS.panel.shouldCancel,
       onProgress: (i, total) => NS.panel.progress(i + 1, total),
     });
@@ -90,12 +105,19 @@
 
   // 学规则：选定快照路径后，给当前服务商追加别名
   async function learnRule(field, targetPath) {
-    const block = merged._n.sectionAliases[NS.normalizeLabel(field.section)];
-    if (block && block !== "_flat" && targetPath.startsWith(block + "[")) {
-      const key = targetPath.slice(targetPath.indexOf("].") + 2);
-      await NS.store.addAlias(provider.key, block, field.label, key);
+    const learningTarget = NS.adapterRegistry && NS.adapterRegistry.learningTarget
+      ? NS.adapterRegistry.learningTarget(field, targetPath, { mergedRules: merged })
+      : { kind: "flat", path: targetPath };
+    if (!learningTarget) return;
+    if (learningTarget.kind === "repeater") {
+      await NS.store.addAlias(provider.key, learningTarget.sectionKey, field.label, learningTarget.fieldPath);
+    } else if (learningTarget.kind === "flat") {
+      await NS.store.addAlias(provider.key, null, field.label, learningTarget.path);
     } else {
-      await NS.store.addAlias(provider.key, null, field.label, targetPath);
+      // Section-scoped persistence is reserved for the platform Adapter round;
+      // never flatten a repeater target into a provider/global alias here.
+      NS.panel.status(`需 section-scoped 规则：${learningTarget.sectionLabel || field.section}，本轮不写入扁平 alias`);
+      return;
     }
     await refresh();
     NS.panel.status(`已学习（${provider.name}）：${field.label} → ${targetPath}`);

@@ -1,0 +1,123 @@
+# Moka / 北森字段基线
+
+生成日期：2026-09-13
+
+本基线读取 `docs/网申字段填写模板_三平台.xlsx` 的明细行，只保留平台列为 `MokaHR` 或 `北森` 的记录，并排除了工作簿顶部的汇总行。本项目仍不处理前程无忧；Round 2 已将部分字段纳入 Schema v2，但没有因此开启高风险平台自动映射。
+
+## 统计
+
+| 平台 | 明细行 | 明确必填 | 选填 | 条件 | 提交相关 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| MokaHR（代码 provider 名称为 Moka） | 38 | 3 | 34 | 0 | 1 个“提交选项” |
+| 北森 | 110 | 56 | 50 | 3 | 1 个“提交条件” |
+
+工作簿按字段行统计，重复经历中的每个字段各计一行；同名字段在不同模块或不同公司页面中仍保留其来源语义。
+
+## 分类口径
+
+- **已有标准字段**：当前 `schema.js` 已有稳定路径，且字段语义足够明确，可以进入现有快照/规则匹配。
+- **后续应加入 Schema 的字段**：有明确的个人简历语义，但当前 Schema 没有独立、稳定的存储位置，或需要新的数组/布尔/结构化字段。
+- **企业/岗位专属问答**：取决于招聘企业、岗位、页面选项或单位，不能从通用简历快照安全推断。
+- **manual-only**：附件、文件、声明、隐私、暂存/提交等必须由用户在页面上确认或操作。本轮不自动上传、不自动勾选声明/隐私、不自动提交。
+
+## 1. 已有标准字段
+
+### Moka
+
+| 页面字段 | 现有路径 | 控件/备注 |
+| --- | --- | --- |
+| 意向工作城市、期望城市 | `intent.cities` | 城市选择/文本；仅在有明确快照值时处理 |
+| 姓名 | `basicInfo.name` | 文本 |
+| 手机号码 | `basicInfo.phone` | 手机号；不把其他模块的“联系电话”当作本人手机号 |
+| 邮箱 | `basicInfo.email` | 邮箱 |
+| 性别 | `basicInfo.gender` | 选择 |
+| 工作经验 | `basicInfo.workYears` | 选择 |
+| 最高学历 | `basicInfo.highestEducation` | 选择 |
+| 所在地 | `basicInfo.currentLocation` | 文本 |
+| 最近公司 | `basicInfo.recentCompany` | 文本 |
+| 出生日期（年龄） | `basicInfo.birthday` | 日期 |
+| 当前薪资 | `intent.currentSalary.amount` | 金额单独存储；周期必须手动确认 |
+| 期望薪资 | `intent.expectedSalary.amount` | 金额单独存储；周期不能由旧字符串猜测 |
+| 工作经历：起止时间、公司名称、职位名称、工作职责 | `work[i].start~end`、`work[i].company`、`work[i].title`、`work[i].desc` | 可重复经历 |
+| 教育背景：就读时间、学校名称、专业名称、学历 | `education[i].start~end`、`education[i].school`、`education[i].major`、`education[i].educationLevel` | 可重复经历；旧 `degree` 已迁移为 `educationLevel` |
+| 实习经历：起止时间、公司名称、职位名称、工作职责 | `internship[i].start~end`、`internship[i].company`、`internship[i].title`、`internship[i].desc` | 可重复经历 |
+| 项目经验：起止时间、项目名称、职责、项目描述、项目中职责 | `project[i].start~end`、`project[i].name`、`project[i].role`、`project[i].desc`、`project[i].resp` | 可重复经历 |
+| 语言能力：语言类型、掌握程度、听说、读写 | `language[i].lang`、`language[i].level`、`language[i].listening`、`language[i].reading` | 可重复经历；选项需精确匹配 |
+| 自我描述 | `selfEval` | 多行文本 |
+| 获奖时间、奖项名称 | `award[i].date`、`award[i].name` | 可重复经历；级别/描述已在 Schema v2 增加 |
+
+### 北森
+
+以下字段在语义上可以落入现有 Schema。是否实际填写仍受快照有无数据、页面是否已有值以及控件是否能被精确验证约束。
+
+| 页面字段 | 现有路径 | 备注 |
+| --- | --- | --- |
+| 姓名、手机号码、邮箱、出生日期 | `basicInfo.name`、`basicInfo.phone`、`basicInfo.email`、`basicInfo.birthday` | 个人信息 |
+| 证件号码 | `basicInfo.idNumber` | 证件号码是敏感字段，不从其他字段推断 |
+| 民族、婚姻状况、籍贯、户籍所在地、现居住地 | `basicInfo.ethnicity`、`basicInfo.maritalStatus`、`basicInfo.nativePlace`、`basicInfo.hukouLocation`、`basicInfo.currentLocation` | 已有独立 Schema v2 字段；籍贯/户籍仍不自动映射 |
+| 最高学历、政治面貌 | `basicInfo.highestEducation`、`basicInfo.politicalStatus` | 下拉选项要求精确候选 |
+| 意向工作地点、意向工作地 | `intent.cities` | 本轮新增低风险 alias |
+| 期望从事职业 | `intent.position` | 本轮新增北森 alias；具体候选仍须页面精确匹配 |
+| 个人信息中的自我评价 | `selfEval` | 多行文本 |
+| 教育经历：学校名称、专业名称、学历、开始/结束时间 | `education[i].school`、`education[i].major`、`education[i].educationLevel`、`education[i].start~end` | 可重复经历 |
+| 实习经历：单位/职位/时间/实习内容 | 语义对应 `internship[i]` | “单位名称”没有直接复用为“公司名称”的全局 alias，避免工作/实习串填；需后续 scoped 规则确认 |
+| 项目经历：项目名称、职务、开始/结束时间、项目描述 | 语义对应 `project[i]` | “职务”与现有 `role` 接近但仍保留待确认 |
+| 获奖项、获奖时间、获奖描述 | `award[i].name`、`award[i].date`、`award[i].description` | 已有 Schema v2 字段；仍需平台语义确认 |
+| 工作经历：公司名称、职位名称、开始/结束时间、工作职责 | `work[i].company`、`work[i].title`、`work[i].start~end`、`work[i].desc` | 可重复经历 |
+| 专业排名 | 仅在教育经历 section 中可考虑 `education[i].rank` | Excel 样本中它出现在附加信息语境，本轮不做全局映射 |
+
+## 2. 已进入 Schema v2、但本轮仍不自动填写的字段
+
+这些字段在 Excel 中真实出现。Round 2 已为语义明确的资料建立正式路径；但 Schema 建立不等于平台映射已验证，本轮仍不猜测 section、候选项或岗位语义。
+
+| 字段/字段组 | 平台 | 建议的后续建模方向 | 本轮处理 |
+| --- | --- | --- | --- |
+| 民族 | 北森 | `basicInfo.ethnicity` | 已有路径；不因建模自动开启平台填写 |
+| 户口所在地、现居住地 | 北森 | `basicInfo.hukouLocation`、`basicInfo.currentLocation` | 与 `nativePlace` 分开；不把旧 `hukou` 猜入其中 |
+| 户籍、户籍所在地、籍贯 | 北森 | `basicInfo.hukouLocation`、`basicInfo.nativePlace` | 当前全部禁用自动映射 |
+| 婚否 | 北森 | `basicInfo.maritalStatus` | 已有路径；候选/语义仍需确认 |
+| 英语等级、英语等级成绩、日语等级 | 北森 | `languageTests[i]` | 只建立语言考试资料，不从 `language.level` 推断 |
+| 学习形式 | 北森 | `education[i].studyMode` | 不把它等同于 `是否全日制` |
+| 成绩（GPA） | 北森 | `education[i].gpa`、`education[i].gpaScale` | 不自动填写 |
+| 专业排名 | 北森 | `education[i].rank` | 仅在明确的教育经历 scope 下使用 |
+| “是否服从公司调剂工作地” | 北森 | `intent.acceptRelocation` | 个人偏好，不从城市字段推断 |
+| 技能：技能名称、掌握程度、使用时间总计、技能描述 | 北森 | `skills[i]` | 已进入正式数组；本轮只存储和编辑，不加入危险通用 alias |
+| 证书：证书名称、获得时间、证书描述 | 北森 | `certificates[i]` | 已进入正式数组；本轮只存储和编辑 |
+| 家庭情况：与本人关系、年龄、工作单位、联系电话 | 北森 | `familyMembers[i]` | 已进入正式数组；不把“联系电话”映射到 `basicInfo.phone` |
+| 推荐人：姓名、关系、工作单位、联系电话 | 北森 | `referrers[i]` | 已进入正式数组；本轮只存储和编辑 |
+| 简历来源、兴趣爱好、奖励及证书、特长、你的优缺点自评 | 北森 | `profileExtras` 或明确的独立字段 | 不通过相似标签猜测 |
+| 有无重大疾病史与传染病史、如有请列出、身体是否有异常、若有请列出、有无犯罪记录 | 北森 | 敏感/合规信息独立分组，需用户明确确认 | 本轮不自动填写 |
+| Moka/北森中“单位名称”“职务”等与现有字段近似但不完全同名的字段 | 北森 | 以 section-scoped alias 或 Adapter 处理 | 本轮不新增全局 alias |
+
+## 3. 企业/岗位专属问答
+
+| 字段 | 平台 | 原因 |
+| --- | --- | --- |
+| 是否可提前实习 | 北森 | 与岗位实习安排直接相关，且在当前页面为必填单选 |
+| 期望月薪、期望年薪 | 北森 | 金额单位和填写格式由企业页面定义；年薪不能静默当作月薪 |
+| 期望从事职业 | 北森 | 本轮仅加入到 `intent.position` 的低风险候选映射，候选项必须精确点击并回读 |
+| 本科生填 | 北森 | 页面提示不完整，需结合学历/岗位条件判断 |
+| 简历来源 | 北森 | 来源选项受企业渠道配置影响 |
+| 如有请列出、若有请列出 | 北森 | 必须知道所对应的前置问题，不能仅靠相同标签匹配 |
+| 获奖级别、技能掌握程度、证书描述等下拉/文本组合 | 北森 | 选项和企业配置可能变化，第二轮再做 scoped mapping |
+
+## 4. manual-only
+
+| 类型 | 页面字段/控件 | 处理边界 |
+| --- | --- | --- |
+| 文件 | 北森“简历文件”“证件照”“附件” | Scanner 识别为 `file`；Matcher 只报告 manual，不调用文件选择器、不上传 |
+| 声明 | 北森“本人实际情况声明” | 只报告 manual，不自动勾选 |
+| 隐私/同意 | 页面隐私政策、同意类控件 | 不自动勾选；由用户核对 |
+| 提交/暂存 | “预览并提交”“暂存”“取消”等按钮 | 不进入填写计划，不自动点击 |
+| Moka 更新选项 | “同步更新在线简历” | 只报告为手动确认项，不擅自改变用户当前选择 |
+| 进行中的经历 | “至今”复选框 | 它是起止时间的一部分；只有快照明确表示仍在进行时才可能随经历计划处理，不能把普通复选框当声明处理 |
+
+## 本轮低风险 alias
+
+仅补充语义明确、与现有字段一一对应的少量规则：
+
+- Moka：`意向工作城市` → `intent.cities`。
+- 北森：`意向工作地点`、`意向工作地` → `intent.cities`；`期望从事职业` → `intent.position`。
+- 移除全局 `联系电话` → `basicInfo.phone`，并在旧规则迁移时删除该不安全映射。
+
+下拉、单选和日期控件均以“精确候选 + 写后回读”为准；没有明确候选、无法回读或存在多个同名候选时跳过并报告。

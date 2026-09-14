@@ -19,6 +19,13 @@
     return n ? { n: n[1] } : null;
   }
 
+  function itemIndexOf(field) {
+    const descriptorIndex = field && field.repeater && field.repeater.itemIndex;
+    if (Number.isInteger(descriptorIndex)) return descriptorIndex;
+    if (Number.isInteger(field && field.itemIndex)) return field.itemIndex;
+    return Number.isInteger(field && field.index) ? field.index : 0;
+  }
+
   // 从页面读取一个字段的值，返回可写入快照的值
   function captureValue(f) {
     if (f.kind === "select") return selectShownText(f.selectControls[0]);
@@ -41,37 +48,48 @@
       return { start, end };
     }
     if (f.kind === "checkbox") return f.checkbox.checked;
+    if (f.kind === "radio") return NS.readFieldValue(f);
+    if (f.kind === "file" || f.kind === "unknown") return "";
     return "";
   }
 
+  // Generic Adapter calls this hook. Provider-specific capture belongs behind
+  // the Registry so learn.js does not need platform control knowledge.
+  NS.captureControlCore = function (field) {
+    return captureValue(field);
+  };
+
   // 整页抓回：识别到路径的写回快照；未识别但有值的进候选
-  NS.captureSnapshot = async function (fields, merged, snapshot) {
+  NS.captureSnapshot = async function (fields, merged, snapshot, adapterContext) {
+    const context = adapterContext || {};
     let updated = 0;
     const candidates = [];
     for (const f of fields) {
       if (!f.label) continue;
-      const block = merged._n.sectionAliases[NS.normalizeLabel(f.section)];
-      const value = captureValue(f);
+      if (f.kind === "file" || /声明|隐私|提交|同步更新|上传|附件|证件照/.test(f.label)) continue;
+      const captureContext = Object.assign({}, context, {
+        field: f,
+        mergedRules: merged,
+        snapshot,
+        providerKey: context.providerKey || "generic",
+      });
+      const value = context.adapterRegistry && typeof context.adapterRegistry.captureControl === "function"
+        ? await context.adapterRegistry.captureControl(captureContext.providerKey, f, captureContext)
+        : await NS.captureControlCore(f, captureContext);
       const empty = value == null || value === "" || (typeof value === "object" && !value.start && !value.end);
       if (empty) continue;
-      let path = null;
-      if (block && block !== "_flat") {
-        const alias = (merged._n.scopedAliases[block] || {})[f.label];
-        if (alias) {
-          if (alias === "range") {
-            snapshot[block] = snapshot[block] || [];
-            snapshot[block][f.index] = snapshot[block][f.index] || {};
-            if (typeof value === "object") {
-              snapshot[block][f.index].start = value.start || "";
-              snapshot[block][f.index].end = value.end || "";
-              updated++;
-            }
-            continue;
-          }
-          path = `${block}[${f.index}].${alias}`;
+      const path = NS.resolvePath(f, merged);
+      if (path && path.endsWith(".start~end")) {
+        const block = path.slice(0, path.indexOf("["));
+        snapshot[block] = snapshot[block] || [];
+        const itemIndex = itemIndexOf(f);
+        snapshot[block][itemIndex] = snapshot[block][itemIndex] || {};
+        if (typeof value === "object") {
+          snapshot[block][itemIndex].start = value.start || "";
+          snapshot[block][itemIndex].end = value.end || "";
+          updated++;
         }
-      } else {
-        path = merged._n.aliases[f.label] || null;
+        continue;
       }
       if (path) {
         NS.deepSet(snapshot, path, value);
@@ -90,7 +108,7 @@
     for (const f of fields) {
       const block = merged._n.sectionAliases[NS.normalizeLabel(f.section)];
       if (!block || block === "_flat") continue;
-      groupsOnPage[block] = Math.max(groupsOnPage[block] || 0, f.index + 1);
+      groupsOnPage[block] = Math.max(groupsOnPage[block] || 0, itemIndexOf(f) + 1);
     }
     let clicked = false;
     for (const [block, have] of Object.entries(groupsOnPage)) {
