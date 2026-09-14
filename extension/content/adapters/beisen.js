@@ -508,6 +508,7 @@
   function setTextValue(input, value) {
     if (!input) return false;
     try {
+      if (typeof input.focus === "function") input.focus();
       const proto = String(input.tagName || "").toUpperCase() === "TEXTAREA"
         ? (typeof HTMLTextAreaElement !== "undefined" && HTMLTextAreaElement.prototype)
         : (typeof HTMLInputElement !== "undefined" && HTMLInputElement.prototype);
@@ -518,6 +519,11 @@
       else if (input.dispatchEvent && typeof Event !== "undefined") {
         input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
         input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      }
+      // The real Phoenix area search also reacts to the keyboard completion
+      // event. Native setter + input/change is not sufficient in every build.
+      if (input.dispatchEvent && typeof KeyboardEvent !== "undefined") {
+        input.dispatchEvent(new KeyboardEvent("keyup", { key: "Unidentified", bubbles: true, composed: true }));
       }
       return true;
     } catch (e) {
@@ -570,10 +576,17 @@
     return selectShownText(field);
   }
 
-  function locationMatches(actual, expected) {
+  function locationMatches(actual, expected, field) {
     const a = normalizedLocation(actual);
     const e = normalizedLocation(expected);
-    return Boolean(a && e && a === e);
+    if (!a || !e) return false;
+    if (a === e) return true;
+    // Phoenix displays only the leaf in the main select after confirmation.
+    // The exact full path was already proven by the unique popup candidate;
+    // keep that proof on the runtime FieldDescriptor for the final readback.
+    const confirmed = field && field._beisenConfirmedLocation;
+    const leaf = normalizedLocation(locationSearchTerm(expected));
+    return Boolean(confirmed && confirmed === e && a === leaf);
   }
 
   async function writeLocation(field, value, context) {
@@ -608,7 +621,10 @@
     }
     const closed = await waitForValue(() => locationPopupFor(docOf(context), componentFor(field)) ? null : true, 30);
     if (!closed) return false;
-    return Boolean(await waitForValue(() => locationMatches(readLocation(field), expected) ? true : null, 30));
+    field._beisenConfirmedLocation = normalizedLocation(expected);
+    const verified = await waitForValue(() => locationMatches(readLocation(field), expected, field) ? true : null, 30);
+    if (!verified) delete field._beisenConfirmedLocation;
+    return Boolean(verified);
   }
 
   async function clearLocation(field, context) {
@@ -617,7 +633,9 @@
     const component = componentFor(field);
     const clear = component && first(component, ".phoenix-select__clearIcon");
     if (clear && isVisible(clear) && dispatchClick(clear)) {
-      return Boolean(await waitForValue(() => !readLocation(field) ? true : null, 30));
+      const cleared = Boolean(await waitForValue(() => !readLocation(field) ? true : null, 30));
+      if (cleared) delete field._beisenConfirmedLocation;
+      return cleared;
     }
     const popup = await openLocationPopup(field, context || {});
     if (!popup) return false;
@@ -627,7 +645,9 @@
       closePopup(docOf(context));
       return false;
     }
-    return Boolean(await waitForValue(() => !readLocation(field) ? true : null, 30));
+    const cleared = Boolean(await waitForValue(() => !readLocation(field) ? true : null, 30));
+    if (cleared) delete field._beisenConfirmedLocation;
+    return cleared;
   }
 
   function activeComponent(doc, component) {
@@ -816,6 +836,19 @@
     return null;
   }
 
+  function radioClickableNode(option) {
+    for (const selector of [
+      ".phoenix-radio__circle-wrapper",
+      ".phoenix-radio__circle",
+      ".phoenix-radio__radio-text",
+      ".phoenix-radio",
+    ]) {
+      const node = first(option, selector);
+      if (node) return node;
+    }
+    return option;
+  }
+
   function readRadio(field) {
     let unknown = false;
     let selected = null;
@@ -888,7 +921,27 @@
     const want = normalize(NS.toOptionText ? NS.toOptionText(context && context.merged || {}, value) : value);
     const matches = (field.radioControls || []).filter((option) => radioOptionText(option) === want);
     if (matches.length !== 1) return false;
-    return dispatchClick(matches[0]);
+    const clickable = radioClickableNode(matches[0]);
+    if (!dispatchClick(clickable)) return false;
+    return Boolean(await waitForValue(() => {
+      const actual = readRadio(field);
+      return actual != null && normalize(actual) === want ? true : null;
+    }, 30));
+  }
+
+  function clearRadio(field) {
+    const options = field && field.radioControls || [];
+    const nativeInputs = options.map((option) => first(option, 'input[type="radio"]'));
+    // The confirmed Phoenix radio has no safe unselect operation. Only allow
+    // clearing a real native radio group when every option exposes one.
+    if (!options.length || nativeInputs.some((input) => !input)) return false;
+    for (const input of nativeInputs) {
+      if (input.checked) {
+        input.checked = false;
+        if (typeof NS.emitInputEvents === "function") NS.emitInputEvents(input);
+      }
+    }
+    return readRadio(field) === "";
   }
 
   function verifyControl(field, value, context) {
@@ -897,7 +950,7 @@
     const kind = (context && context.kind) || field.kind;
     if (kind === "text" || kind === "textarea") return String(actual).trim() === String(value).trim();
     if (kind === "select" || kind === "radio") return normalize(actual) === normalize(NS.toOptionText ? NS.toOptionText(context && context.merged || {}, value) : value);
-    if (kind === "search-select" && field && field.controlVariant === "area-selector") return locationMatches(actual, value);
+    if (kind === "search-select" && field && field.controlVariant === "area-selector") return locationMatches(actual, value, field);
     if (kind === "date") return dateMatches(actual, value, field && field._beisenDateVariant);
     if (kind === "checkbox") return Boolean(actual) === Boolean(value);
     return false;
@@ -1016,6 +1069,10 @@
       return verifyControl(field, value, Object.assign({}, context || {}, { kind: "search-select", controlVariant: "area-selector" }));
     },
 
+    clearRadio(field) {
+      return clearRadio(field);
+    },
+
     async clearControl(field, context) {
       if (!field || field.manualOnly || field.safetyRole) return false;
       const kind = (context && context.kind) || field.kind;
@@ -1025,6 +1082,7 @@
       if (kind === "select") return clearSelect(field, context || {});
       if (kind === "search-select" && field.controlVariant === "area-selector") return clearLocation(field, context || {});
       if (kind === "date") return clearDate(field, context || {});
+      if (kind === "radio") return clearRadio(field);
       return false;
     },
 

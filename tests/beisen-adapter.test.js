@@ -260,7 +260,9 @@ function locationSelect(doc, options = [{ name: "邵阳市", path: "湖南省" }
     };
     confirm.onClick = () => {
       if (!selected) return;
-      placeholder._text = `${selected.path || ""}${selected.name}`;
+      // Real Phoenix keeps only the leaf in the main select. The full path is
+      // visible in the area popup and is used for unique candidate proof.
+      placeholder._text = selected.name;
       component.classList.remove("phoenix-select--active");
       root.remove();
       popup = null;
@@ -354,14 +356,21 @@ function dateSelect(doc, mode = "month", options = {}) {
 }
 
 function radioGroup(values) {
-  const items = values.map((value) => el("div", { className: "phoenix-radio-group__radioItem" },
-    el("div", { className: "phoenix-radio phoenix-radio--withLabel" }, el("span", { className: "phoenix-radio__radio-text", text: value }))));
-  items.forEach((item) => {
-    item.onClick = () => items.forEach((other) => {
+  const items = values.map((value) => {
+    const root = el("div", { className: "phoenix-radio phoenix-radio--withLabel" },
+      el("div", { className: "phoenix-radio__circle-wrapper" }),
+      el("span", { className: "phoenix-radio__radio-text", text: value }));
+    return el("div", { className: "phoenix-radio-group__radioItem" }, root);
+  });
+  const select = (item) => items.forEach((other) => {
       const root = other.querySelector(".phoenix-radio");
       root.classList.remove("phoenix-radio--checked");
       if (other === item) root.classList.add("phoenix-radio--checked");
     });
+  items.forEach((item) => {
+    item.onClick = () => select(item);
+    item.querySelector(".phoenix-radio__circle-wrapper").onClick = () => select(item);
+    item.querySelector(".phoenix-radio__radio-text").onClick = () => select(item);
   });
   return items;
 }
@@ -386,12 +395,13 @@ function buildFixture() {
   const fulltimeRadio = radioGroup(["是", "否"]);
   group(doc, "个人信息", "personal", [
     formItem("姓名", input()),
-    formItem("性别", el("div", {}, ...radioGroup(["男", "女"]))),
+    formItem("性别", el("div", {}, ...radioGroup(["男", "女", "保密"]))),
     formItem("证件照", el("div", { className: "file-uploader__wrapper" }, el("input", { type: "file", style: { display: "none" } }))),
     formItem("出生日期", birthdayDate.component),
     formItem("籍贯", hometownSelect.component),
     formItem("最高学历", personalSelect.component),
     formItem("是否全日制", el("div", {}, ...fulltimeRadio)),
+    formItem("是否可提前实习", el("div", {}, ...radioGroup(["是", "否"]))),
   ]);
   const schoolOne = input();
   const startOne = dateSelect(doc, "month");
@@ -468,7 +478,7 @@ function testPlatformEvidenceAndBoundaries(ctx, fixture) {
   assert.equal(NS.beisenFormState({ document: fixture.doc, location: ctx.location }).status, "BEISEN_UNCERTAIN");
   ctx.location.hostname = "flyaitalent.zhiye.com";
   assert.equal(NS.beisenFormState({ document: fixture.doc, location: ctx.location }).status, "BEISEN_FORM_CONFIRMED");
-  assert.equal(fixture.doc.querySelectorAll(".form-item").length, 15);
+  assert.equal(fixture.doc.querySelectorAll(".form-item").length, 16);
 }
 
 function testScanIdentityAndSafety(ctx, fixture) {
@@ -555,6 +565,13 @@ async function testProviderReadWriteVerifyAndCapture(ctx, fixture) {
   assert.equal(writeGender, true);
   assert.equal(await NS.adapterRegistry.invoke("beisen", "readControl", [gender, {}]), "女");
   assert.equal(await NS.adapterRegistry.invoke("beisen", "verifyControl", [gender, "女", { merged, kind: "radio", actual: "女" }]), true);
+  for (const answer of ["男", "女", "保密"]) {
+    const radioWrite = await NS.adapterRegistry.invoke("beisen", "writeControl", [gender, answer, { merged, kind: "radio" }]);
+    assert.equal(radioWrite, true);
+    assert.equal(NS.adapterRegistry.invoke("beisen", "readControl", [gender, {}]), answer);
+    assert.equal(await NS.adapterRegistry.invoke("beisen", "verifyControl", [gender, answer, { merged, kind: "radio" }]), true);
+  }
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "clearRadio", [gender, {}]), false);
 
   const fulltime = fields.find((field) => field.label === "是否全日制");
   assert.equal(NS.adapterRegistry.invoke("beisen", "readControl", [fulltime, {}]), null);
@@ -573,17 +590,39 @@ async function testProviderReadWriteVerifyAndCapture(ctx, fixture) {
   assert.equal(existingDefaultResult.skipped, 1);
   assert.equal(NS.adapterRegistry.invoke("beisen", "readControl", [fulltime, {}]), "否");
 
+  const earlyInternship = fields.find((field) => field.label === "是否可提前实习");
+  const earlyPlan = NS.buildPlan([earlyInternship], merged, NS.emptySnapshot());
+  assert.equal(earlyPlan.plan.length, 0);
+  assert.equal(earlyPlan.unmatched.length, 1);
+
   const hometown = fields.find((field) => field.label === "籍贯");
   assert.equal(NS.adapterRegistry.invoke("beisen", "readLocation", [hometown, {}]), "");
   const hometownWrite = await NS.adapterRegistry.invoke("beisen", "writeControl", [hometown, "湖南省邵阳市", { merged, kind: "search-select" }]);
   assert.equal(hometownWrite, true);
   assert.deepEqual(fixture.hometownSelect.searchValues, ["邵阳市"]);
-  assert.equal(NS.adapterRegistry.invoke("beisen", "readLocation", [hometown, {}]), "湖南省邵阳市");
+  assert.equal(fixture.hometownSelect.placeholder._text, "邵阳市");
+  assert.equal(NS.adapterRegistry.invoke("beisen", "readLocation", [hometown, {}]), "邵阳市");
   assert.equal(await NS.adapterRegistry.invoke("beisen", "verifyLocation", [hometown, "湖南省邵阳市", { merged }]), true);
   assert.equal(await NS.adapterRegistry.invoke("beisen", "clearLocation", [hometown, {}]), true);
   assert.equal(NS.adapterRegistry.invoke("beisen", "readLocation", [hometown, {}]), "");
+  assert.equal(hometown._beisenConfirmedLocation, undefined);
   assert.equal(NS.resolvePath({ label: "籍贯", section: "个人信息", kind: "text" }, NS.mergedRules(seed, "moka")), null);
   assert.equal(NS.resolvePath({ label: "籍贯", section: "个人信息", kind: "text" }, NS.mergedRules(seed, "generic")), null);
+
+  const pendingLocation = locationSelect(fixture.doc);
+  const pendingField = Object.assign({}, hometown, {
+    controls: [pendingLocation.input],
+    selectComponents: [pendingLocation.component],
+    selectControls: [pendingLocation.input],
+  });
+  pendingLocation.component.click();
+  const pendingCandidate = fixture.doc.querySelector(".area-item-container");
+  assert.ok(pendingCandidate);
+  pendingCandidate.click();
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "verifyLocation", [pendingField, "湖南省邵阳市", { merged }]), false);
+  const pendingPopup = fixture.doc.querySelector(".common-unmodeled-layer");
+  if (pendingPopup) pendingPopup.remove();
+  pendingLocation.component.classList.remove("phoenix-select--active");
 
   const ambiguousLocation = locationSelect(fixture.doc, [
     { name: "邵阳市", path: "湖南省" },

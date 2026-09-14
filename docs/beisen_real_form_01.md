@@ -37,7 +37,7 @@
 | select | `.phoenix-select` + `.phoenix-select__input` | 必须打开 Phoenix popup，再唯一精确点击 `.phoenix-selectList__listItem` |
 | search-select（籍贯） | `.phoenix-select` 打开 `common-unmodeled-layer` → `.area-selector-container`；搜索框 placeholder 为“搜索” | 只在当前字段弹层内搜索；候选需按名称和完整路径唯一匹配，选择后还要点击“确定”并回读 |
 | date | 日期标签下的单个 Phoenix select，打开后 portal 到 `.phoenix-date-picker__wrap` | 由当前弹层真实结构区分：出生日期是完整日历；教育/经历/获奖/证书时间是年月面板；开始/结束是两个独立字段，不按 select 数量猜测 |
-| radio | `.phoenix-radio-group__radioItem` / `.phoenix-radio` | 点击 option；空样本没有 selected marker 时读状态为 unknown，禁止覆盖 |
+| radio | `.phoenix-radio-group` → `.phoenix-radio-group__radioItem` → `.phoenix-radio__circle-wrapper` / `.phoenix-radio__radio-text` | 真实样本的可点击节点优先是 circle wrapper；选中后 `.phoenix-radio--checked`、`.phoenix-radio__circle-wrapper--checked`、`.phoenix-radio__dot--checked` 出现。空样本没有 selected marker 时读状态为 unknown，禁止覆盖 |
 | checkbox | 原生 checkbox | 3 个“至今”属于重复经历；声明 checkbox 为 manual-only |
 | file | `input[type=file]`，隐藏于上传容器 | 只识别，不设置文件、不上传、不删除 |
 | submit | `button` 文本“预览并提交” | 识别为 `unknown` + `safetyRole=submit`，不进入自动填报 |
@@ -56,12 +56,14 @@
 - 普通 Phoenix select 同样要求当前控件是唯一 active 控件，并且只在唯一可见 `.phoenix-selectList` 内做精确匹配。
 - 获奖级别真实候选为：班组级、院校级、县市级、省区级、国家级、国际级、公司级、集团级。Snapshot 的“省级”因此只做已证实的精确转换 `省级 → 省区级`；“国家级”保持原文。没有加入 contains 或候选顺序匹配。
 - 获奖时间和证书获得时间都打开为完整日历：`.phoenix-date-picker__wrap` 内有 `.phoenix-calendar-table`、`.phoenix-calendar-year-select`、`.phoenix-calendar-month-select` 和日期 `td.phoenix-calendar-cell`，没有“确定”按钮；两者均属于 `date-picker`。教育经历的开始时间仍属于 `month-picker`。
-- 籍贯弹层为 `common-unmodeled-layer` → `.area-selector-container` → `.area-search-input`；搜索结果项为 `.area-item-container`，名称在 `.area-text-label`，路径在 `.area-item-path`。当前样本的结果可以同时提供末级名称和省级路径，底部有“取消/确定”。
+- 籍贯弹层为 `common-unmodeled-layer` → `.area-selector-container` → `.area-search-input`；搜索结果项为 `.area-item-container`，名称在 `.area-text-label`，路径在 `.area-item-path`。当前样本的结果可以同时提供末级名称和省级路径，底部有“取消/确定”。确认后主输入框只回显末级名称，因此写入验证使用“唯一完整路径证明 + 主控件末级回读”，不能把主输入框误当成完整行政区路径。
 - “是否全日制”是自绘 radio；当前样本选中后状态落在 `.phoenix-radio--checked` 和 `.phoenix-radio__dot--checked`，空状态不提供可靠 selected marker。Adapter 只对精确的 `个人信息 / 是否全日制` 提供默认答案“是”，不创建教育 Schema 映射。
 
 本轮代码新增基于弹层 DOM 的 `month-picker` / `date-picker` 分支；`readDate` / `writeDate` / `verifyDate` / `clearDate` 按“年份 → 月份 →（完整日历时）日期”执行，并在 Adapter 内先做一次 readback；最终仍由 Core 的双回读验证负责确认。年月控件收到带日值时只验证页面实际支持的年月；完整日历收到只有年月的值时安全失败，不猜具体日。
 
-籍贯使用 Beisen provider alias `籍贯 → basicInfo.nativePlace`，Matcher 只允许它在明确的 `个人信息` flat section 中覆盖歧义保护；其他 provider、未知 section 和其他 flat section 仍不自动映射。地点写入流程是“当前控件 → 当前 area 弹层 → 搜索末级行政区 → 名称/完整路径唯一候选 → 选择 → 确定 → 回读”。
+籍贯使用 Beisen provider alias `籍贯 → basicInfo.nativePlace`，Matcher 只允许它在明确的 `个人信息` flat section 中覆盖歧义保护；其他 provider、未知 section 和其他 flat section 仍不自动映射。地点写入流程是“当前控件 → 当前 area 弹层 → 搜索末级行政区 → 名称/完整路径唯一候选 → 选择 → 右侧 `已选地区1/1` → 当前弹层内唯一 `确定` → 主控件末级回读”；若候选不唯一、未确认或确认后回读为空，仍安全失败。
+
+获奖时间和证书获得时间在真实样本中是完整日历，而当前 Snapshot 的对应值只有年月。实现不会把年月猜成某一天，因此这两项在当前 Snapshot 下保持 manual；只有 Snapshot 提供具体日，且日期候选唯一时才会自动填写。
 
 实习经历在 Beisen provider scoped aliases 中补齐：`单位名称 → company`、`职位名称 → title`、`开始时间 → start`、`结束时间 → end`、`实习内容 → desc`。未知 section 的“单位名称”不生成 internship path。
 
