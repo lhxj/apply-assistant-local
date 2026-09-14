@@ -12,7 +12,7 @@
 - 平台证据：页面包含 `Powered by Beisen`、`.form-item` 字段结构和 Phoenix 控件
 - 检测结果：`BEISEN_FORM_CONFIRMED`
 
-没有点击最终提交、预览提交、声明 checkbox、验证码或上传控件；没有输入、覆盖或保存个人敏感值。学历下拉只打开确认候选层，随后关闭，未点击候选项。
+没有点击最终提交、预览提交、声明 checkbox、验证码或上传控件。为确认籍贯搜索流程，仅在该弹层的搜索框临时输入了用户指定的地区关键词；未选候选、未点击“确定”、未写回字段，也未把该关键词保存到文档。学历下拉只打开确认候选层，随后关闭，未点击候选项。
 
 完整脱敏产物位于 `artifacts/beisen/`；它们只保存结构、标签、计数和布尔状态，不保存实际姓名、手机号、邮箱、学校、URL 参数值、token 或附件。逐字段的属性/placeholder/状态记录见 `BEISEN_REAL_SAMPLE_01_FIELD_INVENTORY.json`。
 
@@ -35,8 +35,9 @@
 | text | `.phoenix-input__input` | 读写 `value`，写后回读 |
 | textarea | `.phoenix-textarea__realTextarea` | 读写 `value`，写后回读 |
 | select | `.phoenix-select` + `.phoenix-select__input` | 必须打开 Phoenix popup，再唯一精确点击 `.phoenix-selectList__listItem` |
-| date | 日期标签下的单个 Phoenix select | 样本中为独立年月选择；开始/结束是两个独立字段，不按 select 数量猜测 |
-| radio | `.phoenix-radio-group__radioItem` / `.phoenix-radio` | 点击 option；空样本没有 selected marker 时读状态为 unknown，禁止覆盖 |
+| search-select（籍贯） | `.phoenix-select` 打开 `common-unmodeled-layer` → `.area-selector-container`；搜索框 placeholder 为“搜索” | 只在当前字段弹层内搜索；候选需按名称和完整路径唯一匹配，选择后还要点击“确定”并回读 |
+| date | 日期标签下的单个 Phoenix select，打开后 portal 到 `.phoenix-date-picker__wrap` | 由当前弹层真实结构区分：出生日期是完整日历；教育/经历/获奖/证书时间是年月面板；开始/结束是两个独立字段，不按 select 数量猜测 |
+| radio | `.phoenix-radio-group` → `.phoenix-radio-group__radioItem` → `.phoenix-radio__circle-wrapper` / `.phoenix-radio__radio-text` | 真实样本的可点击节点优先是 circle wrapper；选中后 `.phoenix-radio--checked`、`.phoenix-radio__circle-wrapper--checked`、`.phoenix-radio__dot--checked` 出现。空样本没有 selected marker 时读状态为 unknown，禁止覆盖 |
 | checkbox | 原生 checkbox | 3 个“至今”属于重复经历；声明 checkbox 为 manual-only |
 | file | `input[type=file]`，隐藏于上传容器 | 只识别，不设置文件、不上传、不删除 |
 | submit | `button` 文本“预览并提交” | 识别为 `unknown` + `safetyRole=submit`，不进入自动填报 |
@@ -44,6 +45,27 @@
 观察到 43 个可见 `.form-item`、7 个重复表单组、2 个 file input、4 个 checkbox 和 3 个底部 button。没有观察到 native select、native radio、cascader、验证码、错误提示或删除按钮。required 标记只在可访问性树中可见，DOM 没有稳定的 `aria-required`、`name`、`id` 或 required class，因此 Adapter 返回 `required=null`，不猜测 required。
 
 下拉候选层通过 body portal 出现，打开“最高学历”时观察到候选项：小学、初中、高中、中技（中专/技校/职高）、高技、大专、本科、硕士研究生、MBA、博士研究生、EMBA、MPA。没有点击候选项，也没有改变页面值。
+
+## 本轮 Phoenix 日期与获奖级别调查
+
+本轮仍使用同一个 `BEISEN_REAL_SAMPLE_01`，日期只打开控件读取 DOM；籍贯只临时输入搜索关键词观察结果，没有选候选或确认。
+
+- 出生日期打开后出现一个可见 `.phoenix-date-picker__wrap`，内部是 `.phoenix-calendar-table`，有 `.phoenix-calendar-year-select`、`.phoenix-calendar-month-select` 和 `td.phoenix-calendar-cell`；跨月日期带 `last-month` / `next-month` class，当前月日期没有该标记。该控件是完整 date picker，支持 `YYYY-MM-DD`。
+- 教育开始时间打开后出现 `.phoenix-calendar-month-panel`，内部是 `.phoenix-calendar-month-panel-year-select` 和 `.phoenix-calendar-month-panel-cell`；年份按钮会打开 `.phoenix-calendar-year-panel`。该控件是年月选择，支持 `YYYY-MM`，不应猜测日。
+- 日期 popup 不是全局候选列表。当前实现要求触发控件带 `.phoenix-select--active`，且页面上恰好只有一个可见 `.phoenix-date-picker__wrap`；候选只在该 popup 内查找。无法证明关联关系时安全失败。
+- 普通 Phoenix select 同样要求当前控件是唯一 active 控件，并且只在唯一可见 `.phoenix-selectList` 内做精确匹配。
+- 获奖级别真实候选为：班组级、院校级、县市级、省区级、国家级、国际级、公司级、集团级。Snapshot 的“省级”因此只做已证实的精确转换 `省级 → 省区级`；“国家级”保持原文。没有加入 contains 或候选顺序匹配。
+- 获奖时间和证书获得时间都打开为完整日历：`.phoenix-date-picker__wrap` 内有 `.phoenix-calendar-table`、`.phoenix-calendar-year-select`、`.phoenix-calendar-month-select` 和日期 `td.phoenix-calendar-cell`，没有“确定”按钮；两者均属于 `date-picker`。教育经历的开始时间仍属于 `month-picker`。
+- 籍贯弹层为 `common-unmodeled-layer` → `.area-selector-container` → `.area-search-input`；搜索结果项为 `.area-item-container`，名称在 `.area-text-label`，路径在 `.area-item-path`。当前样本的结果可以同时提供末级名称和省级路径，底部有“取消/确定”。确认后主输入框只回显末级名称，因此写入验证使用“唯一完整路径证明 + 主控件末级回读”，不能把主输入框误当成完整行政区路径。
+- “是否全日制”是自绘 radio；当前样本选中后状态落在 `.phoenix-radio--checked` 和 `.phoenix-radio__dot--checked`，空状态不提供可靠 selected marker。Adapter 只对精确的 `个人信息 / 是否全日制` 提供默认答案“是”，不创建教育 Schema 映射。
+
+本轮代码新增基于弹层 DOM 的 `month-picker` / `date-picker` 分支；`readDate` / `writeDate` / `verifyDate` / `clearDate` 按“年份 → 月份 →（完整日历时）日期”执行，并在 Adapter 内先做一次 readback；最终仍由 Core 的双回读验证负责确认。年月控件收到带日值时只验证页面实际支持的年月；完整日历收到只有年月的值时安全失败，不猜具体日。
+
+籍贯使用 Beisen provider alias `籍贯 → basicInfo.nativePlace`，Matcher 只允许它在明确的 `个人信息` flat section 中覆盖歧义保护；其他 provider、未知 section 和其他 flat section 仍不自动映射。地点写入流程是“当前控件 → 当前 area 弹层 → 搜索末级行政区 → 名称/完整路径唯一候选 → 选择 → 右侧 `已选地区1/1` → 当前弹层内唯一 `确定` → 主控件末级回读”；若候选不唯一、未确认或确认后回读为空，仍安全失败。
+
+获奖时间和证书获得时间在真实样本中是完整日历，而当前 Snapshot 的对应值只有年月。实现不会把年月猜成某一天，因此这两项在当前 Snapshot 下保持 manual；只有 Snapshot 提供具体日，且日期候选唯一时才会自动填写。
+
+实习经历在 Beisen provider scoped aliases 中补齐：`单位名称 → company`、`职位名称 → title`、`开始时间 → start`、`结束时间 → end`、`实习内容 → desc`。未知 section 的“单位名称”不生成 internship path。
 
 ## 重复组与 identity
 
@@ -101,7 +123,7 @@ sample-confirmed：`.form-item` wrapper/label/control 关系、Phoenix select/ra
 
 保守通用化：严格 hostname 边界、`/form` + DOM evidence 门禁、sectionKey 使用 Schema v2 block、同 section DOM 顺序作为运行时 itemIndex、provider-first fallback。
 
-尚未确认：第二个北森站点的 wrapper 变体、真正多条经历新增后的索引、已选 radio 的所有 class/aria 变体、已填日期/下拉的全部回读格式、cascader、验证码、错误态和条件字段。它们没有被提前实现。
+尚未确认：第二个北森站点的 wrapper 变体、真正多条经历新增后的索引、已选 radio 的所有 class/aria 变体、已填日期/下拉的全部回读格式、其他地区层级和复杂 cascader、验证码、错误态和条件字段。它们没有被提前实现。
 
 ## Fixture 与测试
 
@@ -116,3 +138,7 @@ sample-confirmed：`.form-item` wrapper/label/control 关系、Phoenix select/ra
 ## 后续缺口
 
 在统一审查前不继续扩展。下一次若要提高覆盖，应先采集另一家 zhiye.com 填报页，并在脱敏 fixture 中确认：已选 radio、已填 select/date、真实多 item 新增后的重扫、地区/学校 cascader、条件显示和错误提示。仍需保持附件、声明、验证码和最终提交 manual-only。
+
+## 本轮二次 E2E 环境状态
+
+本轮代码与脱敏 fixture/unit 测试已完成，但当前连接的 Codex 内置浏览器没有加载该扩展：页面运行时不存在 `window.__WSZ`，且真实页面当前只有一个教育经历区块。因此没有执行 Snapshot 导入、一键填写或正式真实页面写入，也没有生成虚假的 plan/filled/verified 统计。真实页只完成了控件结构核验及全日制选中态观察；获奖/证书日期因页面要求具体日而 Snapshot 仅提供年月，按安全规则应保持 manual。要执行完整 E2E，需要用户连接一个已加载扩展的浏览器，并先手动准备两个教育经历区块；仍不得开启 `addItem`。

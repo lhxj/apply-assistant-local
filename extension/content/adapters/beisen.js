@@ -219,12 +219,19 @@
     return null;
   }
 
-  function kindOf(label, parts) {
+  function kindOf(label, parts, section) {
     if (parts.fileControls.length) return "file";
     if (parts.radioControls.length) return "radio";
     if (parts.checkbox && parts.controls.length === 1) return "checkbox";
     if (parts.textControls.some((element) => String(element.tagName || "").toUpperCase() === "TEXTAREA")) return "textarea";
-    if (parts.selectControls.length && !parts.textControls.length) return DATE_LABELS.has(normalize(label)) ? "date" : "select";
+    if (parts.selectControls.length && !parts.textControls.length) {
+      // `籍贯` is a provider-confirmed area selector, not an ordinary Phoenix
+      // option list. Keep the special kind scoped to this exact flat field.
+      if (normalize(section) === "个人信息" && normalize(label) === "籍贯") return "search-select";
+      // Date is the semantic field kind. The actual picker variant is derived
+      // only after opening the current control's popup (see dateVariantOf).
+      return DATE_LABELS.has(normalize(label)) ? "date" : "select";
+    }
     if (parts.textControls.length) return parts.textControls.some((element) => String(element.tagName || "").toUpperCase() === "TEXTAREA") ? "textarea" : "text";
     return "unknown";
   }
@@ -256,9 +263,9 @@
     const parts = controlParts(item);
     const info = sectionInfoForElement(item);
     const repeater = repeaterFor(item, context, info);
-    const kind = kindOf(labels.label, parts);
+    const kind = kindOf(labels.label, parts, info.section);
     const itemIndex = repeater.itemIndex == null ? null : repeater.itemIndex;
-    return {
+    const descriptor = {
       provider: "beisen",
       section: info.section,
       sectionKey: info.sectionKey === "_flat" ? null : info.sectionKey,
@@ -281,6 +288,17 @@
       checkbox: parts.checkbox,
       fileControls: parts.fileControls,
     };
+    if (kind === "search-select" && info.section === "个人信息" && labels.label === "籍贯") {
+      descriptor.controlVariant = "area-selector";
+    }
+    if (kind === "radio" && info.section === "个人信息" && labels.label === "是否全日制") {
+      // This is a provider default, not a Schema/global alias. It is only
+      // offered when the exact real-form field is empty and remains subject to
+      // the normal existing-value guard and double readback verification.
+      descriptor.defaultValue = "是";
+      descriptor.defaultAnswer = "是";
+    }
+    return descriptor;
   }
 
   function safetyDescriptor(label, section, kind, element, extra) {
@@ -407,12 +425,27 @@
     };
   }
 
+  function dateParts(value) {
+    if (NS.parseYearMonth) return NS.parseYearMonth(value);
+    const match = String(value || "").trim().match(/^(\d{4})\s*[.\-/年]\s*(\d{1,2})(?:\s*[.\-/月]\s*(\d{1,2}))?/);
+    if (!match) return null;
+    return { y: match[1], m: String(Number(match[2])), d: match[3] ? String(Number(match[3])) : null };
+  }
+
   function normalizeDate(value) {
-    if (NS.parseYearMonth) {
-      const parsed = NS.parseYearMonth(value);
-      if (parsed) return `${parsed.y}.${String(parsed.m).padStart(2, "0")}`;
-    }
-    return normalize(value);
+    if (NS.normalizeDate) return NS.normalizeDate(value);
+    const parsed = dateParts(value);
+    if (!parsed) return normalize(value);
+    const base = `${parsed.y}.${String(parsed.m).padStart(2, "0")}`;
+    return parsed.d == null ? base : `${base}.${String(parsed.d).padStart(2, "0")}`;
+  }
+
+  function dateMatches(actual, expected, variant) {
+    const a = dateParts(actual);
+    const e = dateParts(expected);
+    if (!a || !e || a.y !== e.y || String(Number(a.m)) !== String(Number(e.m))) return false;
+    if (variant === "month-picker") return true;
+    return e.d == null || (a.d != null && String(Number(a.d)) === String(Number(e.d)));
   }
 
   function selectShownText(field) {
@@ -427,6 +460,362 @@
     const input = field.selectControls && field.selectControls[0];
     const value = normalize(input && input.value);
     return /^(请选择|选择|请填写)$/.test(value) ? "" : value;
+  }
+
+  function componentFor(field) {
+    return field && field.selectComponents && field.selectComponents[0]
+      ? field.selectComponents[0]
+      : (field && field.selectControls && field.selectControls[0] ? closest(field.selectControls[0], SELECT_SELECTOR) : null);
+  }
+
+  function visibleElements(root, selector) {
+    return qsa(root, selector).filter(isVisible);
+  }
+
+  function normalizedLocation(value) {
+    return normalize(String(value || "")).replace(/[>\\/、,，]/g, "");
+  }
+
+  function locationSearchTerm(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const pieces = raw.split(/[\s>\/、,，]+/).filter(Boolean);
+    if (pieces.length > 1) return pieces[pieces.length - 1];
+    // The real sample uses a compact path such as 省 + 市. Prefer the last
+    // administrative unit instead of searching the whole concatenated path.
+    const compact = raw.match(/(?:省|自治区|自治州|地区|盟)([^省市县区旗盟州]+(?:市|县|区|旗|盟|州))$/);
+    return compact ? compact[1] : raw;
+  }
+
+  function locationItemName(item) {
+    return textOf(first(item, ".area-text-label") || first(item, ".area-item-name") || item);
+  }
+
+  function locationItemPath(item) {
+    return textOf(first(item, ".area-item-path"));
+  }
+
+  function locationItemFullText(item) {
+    return `${locationItemPath(item)}${locationItemName(item)}`;
+  }
+
+  function locationItemSelected(item) {
+    const classes = classText(item);
+    if (/(selected|checked|active)/i.test(classes)) return true;
+    return Boolean(first(item, ".area-icon-RadioChecked, .area-icon-RadioCheckedDisabled, [aria-checked=\"true\"], [data-selected=\"true\"]"));
+  }
+
+  function setTextValue(input, value) {
+    if (!input) return false;
+    try {
+      if (typeof input.focus === "function") input.focus();
+      const proto = String(input.tagName || "").toUpperCase() === "TEXTAREA"
+        ? (typeof HTMLTextAreaElement !== "undefined" && HTMLTextAreaElement.prototype)
+        : (typeof HTMLInputElement !== "undefined" && HTMLInputElement.prototype);
+      const descriptor = proto && Object.getOwnPropertyDescriptor(proto, "value");
+      if (descriptor && descriptor.set) descriptor.set.call(input, String(value));
+      else input.value = String(value);
+      if (typeof NS.emitInputEvents === "function") NS.emitInputEvents(input);
+      else if (input.dispatchEvent && typeof Event !== "undefined") {
+        input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      }
+      // The real Phoenix area search also reacts to the keyboard completion
+      // event. Native setter + input/change is not sufficient in every build.
+      if (input.dispatchEvent && typeof KeyboardEvent !== "undefined") {
+        input.dispatchEvent(new KeyboardEvent("keyup", { key: "Unidentified", bubbles: true, composed: true }));
+      }
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function locationPopupFor(doc, component) {
+    if (!doc || !component || !activeComponent(doc, component)) return null;
+    const containers = visibleElements(doc, ".area-selector-container").filter((container) => Boolean(closest(container, ".common-unmodeled-layer")));
+    if (containers.length !== 1) return null;
+    const container = containers[0];
+    const root = closest(container, ".common-unmodeled-layer") || container;
+    const searches = visibleElements(root, 'input[placeholder="搜索"]');
+    if (searches.length !== 1) return null;
+    return { root, container, search: searches[0] };
+  }
+
+  async function openLocationPopup(field, context) {
+    const doc = docOf(context);
+    const component = componentFor(field);
+    if (!doc || !component || !dispatchClick(component)) return null;
+    return waitForValue(() => locationPopupFor(doc, component), 40);
+  }
+
+  function locationCandidates(popup, term, expected) {
+    if (!popup) return [];
+    const normalizedTerm = normalize(term);
+    const normalizedExpected = normalizedLocation(expected);
+    return visibleElements(popup.container, ".area-item-container").filter((item) => {
+      if (normalize(locationItemName(item)) !== normalizedTerm) return false;
+      if (!normalizedExpected) return true;
+      const full = normalizedLocation(locationItemFullText(item));
+      return full === normalizedExpected || normalizedLocation(locationItemName(item)) === normalizedExpected;
+    });
+  }
+
+  function exactTextNodes(root, selector, value) {
+    const want = normalize(value);
+    return visibleElements(root, selector).filter((element) => normalize(textOf(element)) === want);
+  }
+
+  function locationSelectionCount(popup) {
+    const text = normalize(textOf(popup && popup.container));
+    const match = text.match(/已选地区(\d+)\/(\d+)/);
+    return match ? Number(match[1]) : null;
+  }
+
+  function readLocation(field) {
+    return selectShownText(field);
+  }
+
+  function locationMatches(actual, expected, field) {
+    const a = normalizedLocation(actual);
+    const e = normalizedLocation(expected);
+    if (!a || !e) return false;
+    if (a === e) return true;
+    // Phoenix displays only the leaf in the main select after confirmation.
+    // The exact full path was already proven by the unique popup candidate;
+    // keep that proof on the runtime FieldDescriptor for the final readback.
+    const confirmed = field && field._beisenConfirmedLocation;
+    const leaf = normalizedLocation(locationSearchTerm(expected));
+    return Boolean(confirmed && confirmed === e && a === leaf);
+  }
+
+  async function writeLocation(field, value, context) {
+    const expected = String(value || "").trim();
+    const term = locationSearchTerm(expected);
+    if (!expected || !term) return false;
+    const popup = await openLocationPopup(field, context || {});
+    if (!popup || !setTextValue(popup.search, term)) {
+      closePopup(docOf(context));
+      return false;
+    }
+    const found = await waitForValue(() => {
+      const matches = locationCandidates(popup, term, expected);
+      return matches.length ? matches : null;
+    }, 40);
+    if (!found || found.length !== 1 || !dispatchClick(found[0])) {
+      closePopup(docOf(context));
+      return false;
+    }
+    const selected = await waitForValue(() => {
+      const count = locationSelectionCount(popup);
+      return count === 1 || locationItemSelected(found[0]) ? true : null;
+    }, 30);
+    if (!selected) {
+      closePopup(docOf(context));
+      return false;
+    }
+    const confirm = exactTextNodes(popup.root, ".phoenix-button__content, button, [role=\"button\"]", "确定");
+    if (confirm.length !== 1 || !dispatchClick(confirm[0])) {
+      closePopup(docOf(context));
+      return false;
+    }
+    const closed = await waitForValue(() => locationPopupFor(docOf(context), componentFor(field)) ? null : true, 30);
+    if (!closed) return false;
+    field._beisenConfirmedLocation = normalizedLocation(expected);
+    const verified = await waitForValue(() => locationMatches(readLocation(field), expected, field) ? true : null, 30);
+    if (!verified) delete field._beisenConfirmedLocation;
+    return Boolean(verified);
+  }
+
+  async function clearLocation(field, context) {
+    const current = readLocation(field);
+    if (!current) return true;
+    const component = componentFor(field);
+    const clear = component && first(component, ".phoenix-select__clearIcon");
+    if (clear && isVisible(clear) && dispatchClick(clear)) {
+      const cleared = Boolean(await waitForValue(() => !readLocation(field) ? true : null, 30));
+      if (cleared) delete field._beisenConfirmedLocation;
+      return cleared;
+    }
+    const popup = await openLocationPopup(field, context || {});
+    if (!popup) return false;
+    const clearButtons = exactTextNodes(popup.root, ".area-footer-button, .phoenix-button__content, button, [role=\"button\"], [class*=\"clear\"], [class*=\"Clear\"]", "清空已选");
+    const confirm = exactTextNodes(popup.root, ".phoenix-button__content, button, [role=\"button\"]", "确定");
+    if (clearButtons.length !== 1 || confirm.length !== 1 || !dispatchClick(clearButtons[0]) || !dispatchClick(confirm[0])) {
+      closePopup(docOf(context));
+      return false;
+    }
+    const cleared = Boolean(await waitForValue(() => !readLocation(field) ? true : null, 30));
+    if (cleared) delete field._beisenConfirmedLocation;
+    return cleared;
+  }
+
+  function activeComponent(doc, component) {
+    if (!doc || !component) return false;
+    const active = visibleElements(doc, `${SELECT_SELECTOR}.phoenix-select--active`);
+    return active.length === 1 && active[0] === component;
+  }
+
+  async function waitForValue(read, attempts) {
+    const count = Number.isInteger(attempts) ? attempts : 40;
+    for (let i = 0; i < count; i += 1) {
+      const value = read();
+      if (value) return value;
+      if (NS.sleep) await NS.sleep(60);
+    }
+    return null;
+  }
+
+  async function openSelectPopup(field, context) {
+    const doc = docOf(context);
+    const component = componentFor(field);
+    if (!doc || !component || !dispatchClick(component)) return null;
+    return waitForValue(() => {
+      if (!activeComponent(doc, component)) return null;
+      const popups = visibleElements(doc, ".phoenix-selectList");
+      return popups.length === 1 ? popups[0] : null;
+    });
+  }
+
+  async function openDatePopup(field, context) {
+    const doc = docOf(context);
+    const component = componentFor(field);
+    if (!doc || !component || !dispatchClick(component)) return null;
+    return waitForValue(() => {
+      if (!activeComponent(doc, component)) return null;
+      const popups = visibleElements(doc, ".phoenix-date-picker__wrap");
+      return popups.length === 1 ? popups[0] : null;
+    });
+  }
+
+  function dateVariantOf(popup) {
+    if (!popup) return null;
+    const monthPanels = visibleElements(popup, ".phoenix-calendar-month-panel");
+    const dayTables = visibleElements(popup, ".phoenix-calendar-table");
+    if (monthPanels.length === 1 && dayTables.length === 0) return "month-picker";
+    if (dayTables.length === 1 && monthPanels.length === 0) return "date-picker";
+    return null;
+  }
+
+  function pickerMode(variant) {
+    if (variant === "month-picker") return "month";
+    if (variant === "date-picker") return "day";
+    return null;
+  }
+
+  // Variant detection is deliberately DOM-based. Labels only tell scanFields
+  // that a field is date-like; they never decide whether it is month-only or
+  // a full date picker.
+  async function detectDateVariant(field, context) {
+    const popup = await openDatePopup(field, context || {});
+    if (!popup) return null;
+    const variant = dateVariantOf(popup);
+    if (!variant) closePopup(docOf(context));
+    return variant ? { popup, variant } : null;
+  }
+
+  function yearText(value) {
+    const match = String(value || "").match(/\b(\d{4})\b/);
+    return match ? match[1] : null;
+  }
+
+  function monthNumber(value) {
+    const match = String(value || "").trim().match(/^(\d{1,2})\s*月?$/);
+    return match ? String(Number(match[1])) : null;
+  }
+
+  function dayNumber(value) {
+    const match = String(value || "").trim().match(/^(\d{1,2})$/);
+    return match ? String(Number(match[1])) : null;
+  }
+
+  async function chooseDateYear(popup, year, mode) {
+    const buttonSelector = mode === "month"
+      ? ".phoenix-calendar-month-panel-year-select"
+      : ".phoenix-calendar-year-select";
+    const buttons = visibleElements(popup, buttonSelector);
+    if (buttons.length !== 1) return false;
+    if (yearText(textOf(buttons[0])) === year) return true;
+    if (!dispatchClick(buttons[0])) return false;
+    const yearPanel = await waitForValue(() => {
+      const panels = visibleElements(popup, ".phoenix-calendar-year-panel");
+      return panels.length === 1 ? panels[0] : null;
+    });
+    if (!yearPanel) return false;
+    const matches = visibleElements(yearPanel, ".phoenix-calendar-year-panel-cell").filter((cell) => yearText(textOf(cell)) === year);
+    if (matches.length !== 1 || !dispatchClick(matches[0])) return false;
+    return Boolean(await waitForValue(() => {
+      const panels = visibleElements(popup, ".phoenix-calendar-year-panel");
+      return panels.length === 0 ? true : null;
+    }));
+  }
+
+  async function chooseDateMonth(popup, month) {
+    if (visibleElements(popup, ".phoenix-calendar-month-panel").length === 0) {
+      const buttons = visibleElements(popup, ".phoenix-calendar-month-select");
+      if (buttons.length !== 1 || !dispatchClick(buttons[0])) return false;
+      if (!await waitForValue(() => visibleElements(popup, ".phoenix-calendar-month-panel").length === 1 ? true : null)) return false;
+    }
+    const matches = visibleElements(popup, ".phoenix-calendar-month-panel-cell").filter((cell) => monthNumber(textOf(cell)) === month);
+    if (matches.length !== 1) return false;
+    return dispatchClick(matches[0]);
+  }
+
+  function chooseDateDay(popup, day) {
+    const matches = visibleElements(popup, ".phoenix-calendar-table td.phoenix-calendar-cell").filter((cell) => {
+      const cls = classText(cell);
+      if (/last-month|next-month/.test(cls)) return false;
+      return dayNumber(textOf(cell)) === day;
+    });
+    if (matches.length !== 1) return false;
+    return dispatchClick(matches[0]);
+  }
+
+  function readDate(field) {
+    const value = selectShownText(field);
+    return value ? normalizeDate(value) : "";
+  }
+
+  async function writeDate(field, value, context) {
+    const expected = dateParts(value);
+    if (!expected || !expected.y || !expected.m) return false;
+    const detected = await detectDateVariant(field, context || {});
+    const popup = detected && detected.popup;
+    const variant = detected && detected.variant;
+    const mode = pickerMode(variant);
+    if (!popup || !mode) return false;
+    // A full date picker cannot safely invent a day from a month-only value.
+    // A month picker may receive a value that also contains a day; the page's
+    // confirmed precision wins and readback verifies only year/month.
+    if (mode === "day" && expected.d == null) {
+      closePopup(docOf(context));
+      return false;
+    }
+    field._beisenDateVariant = variant;
+    if (!await chooseDateYear(popup, expected.y, mode)) {
+      closePopup(docOf(context));
+      return false;
+    }
+    if (!await chooseDateMonth(popup, expected.m)) {
+      closePopup(docOf(context));
+      return false;
+    }
+    if (mode === "day" && !chooseDateDay(popup, expected.d)) {
+      closePopup(docOf(context));
+      return false;
+    }
+    const verified = await waitForValue(() => dateMatches(readDate(field), value, variant) ? true : null, 20);
+    return Boolean(verified);
+  }
+
+  async function clearDate(field, context) {
+    const current = readDate(field);
+    if (!current) return true;
+    const component = componentFor(field);
+    const clear = component && first(component, ".phoenix-select__clearIcon");
+    if (!clear || !isVisible(clear) || !dispatchClick(clear)) return false;
+    const cleared = await waitForValue(() => !readDate(field) ? true : null, 20);
+    return Boolean(cleared);
   }
 
   function radioOptionText(element) {
@@ -445,6 +834,19 @@
       if (tokens.some((token) => /(^|--)(unchecked|unselected|is-unchecked)$/.test(token))) return false;
     }
     return null;
+  }
+
+  function radioClickableNode(option) {
+    for (const selector of [
+      ".phoenix-radio__circle-wrapper",
+      ".phoenix-radio__circle",
+      ".phoenix-radio__radio-text",
+      ".phoenix-radio",
+    ]) {
+      const node = first(option, selector);
+      if (node) return node;
+    }
+    return option;
   }
 
   function readRadio(field) {
@@ -469,10 +871,8 @@
       return input ? String(input.value || "").trim() : "";
     }
     if (field.kind === "select") return selectShownText(field);
-    if (field.kind === "date") {
-      const value = selectShownText(field);
-      return value ? normalizeDate(value) : "";
-    }
+    if (field.kind === "search-select" && field.controlVariant === "area-selector") return readLocation(field);
+    if (field.kind === "date") return readDate(field);
     if (field.kind === "radio") return readRadio(field);
     if (field.kind === "checkbox") return Boolean(field.checkbox && field.checkbox.checked);
     if (field.kind === "file") return Boolean((field.fileControls || []).some((input) => input.files && input.files.length));
@@ -499,16 +899,14 @@
 
   async function pickFromPopup(field, value, context) {
     const doc = docOf(context);
-    const component = field.selectComponents && field.selectComponents[0]
-      ? field.selectComponents[0]
-      : (field.selectControls && field.selectControls[0] ? closest(field.selectControls[0], SELECT_SELECTOR) : null);
-    if (!component || !dispatchClick(component)) return false;
-    const want = field.kind === "date" ? normalizeDate(value) : normalize(NS.toOptionText ? NS.toOptionText(context && context.merged || {}, value) : value);
+    const popup = await openSelectPopup(field, context || {});
+    if (!doc || !popup) return false;
+    const want = normalize(NS.toOptionText ? NS.toOptionText(context && context.merged || {}, value) : value);
     const deadline = Date.now() + 2500;
     while (Date.now() < deadline) {
-      const options = qsa(doc, ".phoenix-selectList__listItem").filter(isVisible);
+      const options = qsa(popup, ".phoenix-selectList__listItem").filter(isVisible);
       const matches = options.filter((option) => {
-        const optionText = field.kind === "date" ? normalizeDate(textOf(option)) : normalize(textOf(option));
+        const optionText = normalize(textOf(option));
         return optionText === want;
       });
       if (matches.length === 1) return dispatchClick(matches[0]);
@@ -523,7 +921,27 @@
     const want = normalize(NS.toOptionText ? NS.toOptionText(context && context.merged || {}, value) : value);
     const matches = (field.radioControls || []).filter((option) => radioOptionText(option) === want);
     if (matches.length !== 1) return false;
-    return dispatchClick(matches[0]);
+    const clickable = radioClickableNode(matches[0]);
+    if (!dispatchClick(clickable)) return false;
+    return Boolean(await waitForValue(() => {
+      const actual = readRadio(field);
+      return actual != null && normalize(actual) === want ? true : null;
+    }, 30));
+  }
+
+  function clearRadio(field) {
+    const options = field && field.radioControls || [];
+    const nativeInputs = options.map((option) => first(option, 'input[type="radio"]'));
+    // The confirmed Phoenix radio has no safe unselect operation. Only allow
+    // clearing a real native radio group when every option exposes one.
+    if (!options.length || nativeInputs.some((input) => !input)) return false;
+    for (const input of nativeInputs) {
+      if (input.checked) {
+        input.checked = false;
+        if (typeof NS.emitInputEvents === "function") NS.emitInputEvents(input);
+      }
+    }
+    return readRadio(field) === "";
   }
 
   function verifyControl(field, value, context) {
@@ -532,7 +950,8 @@
     const kind = (context && context.kind) || field.kind;
     if (kind === "text" || kind === "textarea") return String(actual).trim() === String(value).trim();
     if (kind === "select" || kind === "radio") return normalize(actual) === normalize(NS.toOptionText ? NS.toOptionText(context && context.merged || {}, value) : value);
-    if (kind === "date") return normalizeDate(actual) === normalizeDate(value);
+    if (kind === "search-select" && field && field.controlVariant === "area-selector") return locationMatches(actual, value, field);
+    if (kind === "date") return dateMatches(actual, value, field && field._beisenDateVariant);
     if (kind === "checkbox") return Boolean(actual) === Boolean(value);
     return false;
   }
@@ -613,6 +1032,10 @@
       return readControl(field);
     },
 
+    readDate(field) {
+      return readDate(field);
+    },
+
     captureControl(field) {
       return readControl(field);
     },
@@ -623,7 +1046,9 @@
       if (kind === "text" || kind === "textarea" || kind === "checkbox") {
         return Boolean(NS.writeControlCore && await NS.writeControlCore(field, value, Object.assign({}, context || {}, { kind })));
       }
-      if (kind === "select" || kind === "date") return pickFromPopup(field, value, context || {});
+      if (kind === "select") return pickFromPopup(field, value, context || {});
+      if (kind === "search-select" && field.controlVariant === "area-selector") return writeLocation(field, value, context || {});
+      if (kind === "date") return writeDate(field, value, context || {});
       if (kind === "radio") return writeRadio(field, value, context || {});
       return false;
     },
@@ -632,14 +1057,41 @@
       return verifyControl(field, value, context || {});
     },
 
+    verifyDate(field, value, context) {
+      return verifyControl(field, value, Object.assign({}, context || {}, { kind: "date" }));
+    },
+
+    readLocation(field) {
+      return readLocation(field);
+    },
+
+    verifyLocation(field, value, context) {
+      return verifyControl(field, value, Object.assign({}, context || {}, { kind: "search-select", controlVariant: "area-selector" }));
+    },
+
+    clearRadio(field) {
+      return clearRadio(field);
+    },
+
     async clearControl(field, context) {
       if (!field || field.manualOnly || field.safetyRole) return false;
       const kind = (context && context.kind) || field.kind;
       if (kind === "text" || kind === "textarea" || kind === "checkbox") {
         return Boolean(NS.clearControlCore && await NS.clearControlCore(field, Object.assign({}, context || {}, { kind })));
       }
-      if (kind === "select" || kind === "date") return clearSelect(field, context || {});
+      if (kind === "select") return clearSelect(field, context || {});
+      if (kind === "search-select" && field.controlVariant === "area-selector") return clearLocation(field, context || {});
+      if (kind === "date") return clearDate(field, context || {});
+      if (kind === "radio") return clearRadio(field);
       return false;
+    },
+
+    clearDate(field, context) {
+      return clearDate(field, context || {});
+    },
+
+    clearLocation(field, context) {
+      return clearLocation(field, context || {});
     },
 
     // Add buttons are visible in the real sample, but auto-add is deliberately
