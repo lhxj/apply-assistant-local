@@ -53,14 +53,29 @@
     return "";
   }
 
+  // Generic Adapter calls this hook. Provider-specific capture belongs behind
+  // the Registry so learn.js does not need platform control knowledge.
+  NS.captureControlCore = function (field) {
+    return captureValue(field);
+  };
+
   // 整页抓回：识别到路径的写回快照；未识别但有值的进候选
-  NS.captureSnapshot = async function (fields, merged, snapshot) {
+  NS.captureSnapshot = async function (fields, merged, snapshot, adapterContext) {
+    const context = adapterContext || {};
     let updated = 0;
     const candidates = [];
     for (const f of fields) {
       if (!f.label) continue;
       if (f.kind === "file" || /声明|隐私|提交|同步更新|上传|附件|证件照/.test(f.label)) continue;
-      const value = captureValue(f);
+      const captureContext = Object.assign({}, context, {
+        field: f,
+        mergedRules: merged,
+        snapshot,
+        providerKey: context.providerKey || "generic",
+      });
+      const value = context.adapterRegistry && typeof context.adapterRegistry.captureControl === "function"
+        ? await context.adapterRegistry.captureControl(captureContext.providerKey, f, captureContext)
+        : await NS.captureControlCore(f, captureContext);
       const empty = value == null || value === "" || (typeof value === "object" && !value.start && !value.end);
       if (empty) continue;
       const path = NS.resolvePath(f, merged);

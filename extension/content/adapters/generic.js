@@ -9,7 +9,16 @@
       addItem: { education: false, work: false, internship: false, project: false },
     },
 
-    // DOM 扫描仍由 scanner.js 负责；这里仅暴露现有容器发现逻辑的兼容入口。
+    // Generic scanner boundary: keep the existing scanner as the source of
+    // truth until a provider proves a complete or augmenting scan.
+    scanFields(context) {
+      return typeof NS.scanFields === "function"
+        ? NS.scanFields((context && context.domConfig) || {})
+        : [];
+    },
+
+    // DOM container discovery remains available as a lower-level compatibility
+    // hook for future provider adapters.
     getFieldContainers(context) {
       return typeof NS.getGenericFieldContainers === "function"
         ? NS.getGenericFieldContainers(context && context.domConfig)
@@ -49,6 +58,16 @@
 
     verifyControl(field, value, context) {
       if (typeof NS.verifyControlCore === "function") return NS.verifyControlCore(field, value, context || {});
+      return false;
+    },
+
+    captureControl(field, context) {
+      if (typeof NS.captureControlCore === "function") return NS.captureControlCore(field, context || {});
+      return undefined;
+    },
+
+    clearControl(field, context) {
+      if (typeof NS.clearControlCore === "function") return NS.clearControlCore(field, context || {});
       return false;
     },
 

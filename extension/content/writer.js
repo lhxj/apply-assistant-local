@@ -265,6 +265,44 @@
     return false; // 没有清除按钮，放弃（报告里列出）
   }
 
+  // Generic Adapter calls this hook. Unknown and unsupported controls must
+  // report failure; a skipped action must never be counted as cleared.
+  NS.clearControlCore = async function (field, context) {
+    const f = field || {};
+    const kind = (context && context.kind) || f.kind || "unknown";
+    try {
+      if (kind === "text" || kind === "textarea") {
+        const el = (f.textControls && f.textControls[0]) || (f.controls && f.controls[0]);
+        if (!el) return false;
+        el.scrollIntoView({ block: "center", behavior: "instant" });
+        el.focus();
+        setNativeValue(el, "");
+        el.blur();
+        return true;
+      }
+      if (kind === "checkbox") {
+        if (!f.checkbox) return false;
+        if (f.checkbox.checked) { f.checkbox.click(); NS.emitInputEvents(f.checkbox); }
+        return true;
+      }
+      if (kind === "select") {
+        return Boolean(f.selectControls && f.selectControls[0] && await clearSelect(f.selectControls[0]));
+      }
+      if (kind === "date" || kind === "range") {
+        const selects = f.selectControls || [];
+        if (!selects.length) return false;
+        let ok = true;
+        for (const s of selects) { if (!(await clearSelect(s))) ok = false; await NS.sleep(50); }
+        if (f.checkbox && f.checkbox.checked) { f.checkbox.click(); NS.emitInputEvents(f.checkbox); }
+        return ok;
+      }
+      // radio/file/unknown and any future unclassified kind are manual-only.
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
+
   // 清空表单：把页面上所有已填内容清掉
   NS.clearForm = async function (fields, opts) {
     const results = { cleared: 0, failed: [] };
@@ -273,23 +311,14 @@
       const f = fields[i];
       if (opts && opts.shouldCancel && opts.shouldCancel()) { results.cancelled = true; break; }
       if (!NS.hasValue(f)) { opts && opts.onProgress && opts.onProgress(i, fields.length, f); continue; }
-      let ok = true;
+      let ok = false;
       try {
-        if (f.kind === "text" || f.kind === "textarea") {
-          const el = f.textControls[0] || f.controls[0];
-          el.scrollIntoView({ block: "center", behavior: "instant" });
-          el.focus();
-          setNativeValue(el, "");
-          el.blur();
-        } else if (f.kind === "checkbox") {
-          if (f.checkbox.checked) { f.checkbox.click(); NS.emitInputEvents(f.checkbox); }
-        } else if (f.kind === "select") {
-          ok = await clearSelect(f.selectControls[0]);
-        } else if (f.kind === "date" || f.kind === "range") {
-          for (const s of f.selectControls) { if (!(await clearSelect(s))) ok = false; await NS.sleep(50); }
-          if (f.checkbox && f.checkbox.checked) { f.checkbox.click(); NS.emitInputEvents(f.checkbox); }
-        } else if (f.kind === "radio" || f.kind === "file" || f.kind === "unknown") {
-          ok = false;
+        const providerKey = (opts && opts.providerKey) || "generic";
+        const context = Object.assign({}, opts || {}, { field: f, kind: f.kind || "unknown", providerKey });
+        if (opts && opts.adapterRegistry && typeof opts.adapterRegistry.clearControl === "function") {
+          ok = Boolean(await opts.adapterRegistry.clearControl(providerKey, f, context));
+        } else {
+          ok = Boolean(await NS.clearControlCore(f, context));
         }
       } catch (e) { ok = false; }
       if (ok) results.cleared++;

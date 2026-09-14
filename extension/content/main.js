@@ -16,16 +16,13 @@
   }
 
   function scanFields() {
-    const fields = NS.scanFields(merged.dom);
-    return NS.adapterRegistry
-      ? NS.adapterRegistry.normalizeFields(fields, {
-          providerKey: provider.key || "generic",
-          provider,
-          rules,
-          mergedRules: merged,
-          document,
-        })
-      : fields;
+    return NS.adapterRegistry.scanFields(provider.key || "generic", {
+      provider,
+      rules,
+      mergedRules: merged,
+      domConfig: merged.dom,
+      document,
+    });
   }
 
   async function doFill() {
@@ -59,7 +56,13 @@
     await refresh();
     NS.panel.status("抓取页面内容…");
     const fields = scanFields();
-    const { updated, candidates } = await NS.captureSnapshot(fields, merged, snapshot);
+    const { updated, candidates } = await NS.captureSnapshot(fields, merged, snapshot, {
+      adapterRegistry: NS.adapterRegistry,
+      providerKey: provider.key || "generic",
+      provider,
+      rules,
+      document,
+    });
     await NS.store.saveSnapshot(snapshot);
     NS.panel.report({
       filled: 0, skipped: 0, failed: [], noData: [],
@@ -91,6 +94,8 @@
     NS.panel.status("清空中…");
     const results = await NS.clearForm(fields, {
       delayMs: 60,
+      adapterRegistry: NS.adapterRegistry,
+      providerKey: provider.key || "generic",
       shouldCancel: NS.panel.shouldCancel,
       onProgress: (i, total) => NS.panel.progress(i + 1, total),
     });

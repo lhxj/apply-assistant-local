@@ -4,6 +4,10 @@
   const definitions = NS.adapterDefinitions || {};
   const generic = definitions.generic || NS.genericAdapter;
 
+  function isPromise(value) {
+    return Boolean(value && typeof value.then === "function");
+  }
+
   function call(adapter, method, args, fallback) {
     const fn = adapter && adapter[method];
     if (typeof fn === "function") {
@@ -19,6 +23,19 @@
       }
     }
     return fallback ? call(fallback, method, args, null) : undefined;
+  }
+
+  // Contract metadata marks structural methods as synchronous. Do not let a
+  // provider Promise leak into a FieldDescriptor; use Generic for that call.
+  function callSync(adapter, method, args) {
+    const fn = adapter && adapter[method];
+    if (typeof fn !== "function") return undefined;
+    try {
+      const result = fn.apply(adapter, args || []);
+      return isPromise(result) ? undefined : result;
+    } catch (e) {
+      return undefined;
+    }
   }
 
   function sectionInfo(raw, field) {
@@ -56,16 +73,49 @@
       return call(adapter, method, args || [], adapter === generic ? null : generic);
     },
 
+    // Synchronous structural boundary. Promise-returning provider methods are
+    // treated as unavailable and fall back to Generic immediately.
+    invokeSync(providerOrAdapter, method, args) {
+      const adapter = typeof providerOrAdapter === "string" ? this.get(providerOrAdapter) : (providerOrAdapter || generic);
+      const result = callSync(adapter, method, args || []);
+      if (result !== undefined) return result;
+      return adapter === generic ? undefined : callSync(generic, method, args || []);
+    },
+
+    // Provider-first scanner entry point. A provider may return a complete
+    // list or use context.genericScanFields() and augment that list.
+    scanFields(providerKey, context = {}) {
+      const registry = this;
+      const callContext = Object.assign({}, context, { providerKey: providerKey || "generic" });
+      callContext.genericScanFields = (extra = {}) => {
+        const genericContext = Object.assign({}, callContext, extra);
+        const result = registry.invokeSync(generic, "scanFields", [genericContext]);
+        return Array.isArray(result) ? result : [];
+      };
+      const fields = registry.invokeSync(providerKey || "generic", "scanFields", [callContext]);
+      return registry.normalizeFields(Array.isArray(fields) ? fields : [], callContext);
+    },
+
+    captureControl(providerKey, field, context = {}) {
+      const callContext = Object.assign({}, context, { field, providerKey: providerKey || "generic" });
+      return this.invoke(providerKey || "generic", "captureControl", [field, callContext]);
+    },
+
+    clearControl(providerKey, field, context = {}) {
+      const callContext = Object.assign({}, context, { field, providerKey: providerKey || "generic" });
+      return this.invoke(providerKey || "generic", "clearControl", [field, callContext]);
+    },
+
     normalizeField(field, context = {}) {
       const providerKey = context.providerKey || field.provider || "generic";
       const adapter = this.get(providerKey);
       const callContext = Object.assign({}, context, { field, providerKey });
-      const rawSection = this.invoke(adapter, "getSection", [field.container, callContext]);
+      const rawSection = this.invokeSync(adapter, "getSection", [field.container, callContext]);
       const info = sectionInfo(rawSection, field);
       const sectionKey = configuredSectionKey(field, context, info.section) || info.sectionKey;
       const canonicalSectionKey = sectionKey && sectionKey !== "_flat" ? sectionKey : null;
-      const repeater = this.invoke(adapter, "getRepeaterItem", [field.container, Object.assign({}, callContext, { sectionKey: canonicalSectionKey })]) || {};
-      const kind = this.invoke(adapter, "classifyControl", [field, callContext]) || field.kind || "unknown";
+      const repeater = this.invokeSync(adapter, "getRepeaterItem", [field.container, Object.assign({}, callContext, { sectionKey: canonicalSectionKey })]) || {};
+      const kind = this.invokeSync(adapter, "classifyControl", [field, callContext]) || field.kind || "unknown";
       const inheritedRepeater = field.repeater && typeof field.repeater === "object" ? field.repeater : {};
       const itemIndex = inheritedRepeater.itemIndex != null
         ? inheritedRepeater.itemIndex
@@ -100,7 +150,7 @@
     },
 
     findAddButton(providerKey, section, context) {
-      return this.invoke(providerKey, "findAddButton", [section, context]) || null;
+      return this.invokeSync(providerKey, "findAddButton", [section, context]) || null;
     },
 
     canAddItem(providerKey, sectionKey) {

@@ -11,6 +11,7 @@ Adapter Registry
   └─ Beisen（空壳）
   ↓ provider-first、field-level fallback
 Core matcher → writer → verify
+Core learn → capture / clear
 ```
 
 ## Adapter Contract
@@ -21,6 +22,8 @@ Adapter 以普通对象提供 `key`、`capabilities` 和可选方法。当前约
 {
   key,
 
+  scanFields(context),
+
   getFieldContainers(context),
   getSection(container, context),
   getRepeaterItem(container, context),
@@ -30,16 +33,32 @@ Adapter 以普通对象提供 `key`、`capabilities` 和可选方法。当前约
   readControl(field, context),
   writeControl(field, value, context),
   verifyControl(field, value, context),
+  captureControl(field, context),
+  clearControl(field, context),
 
   findAddButton(section, context)
 }
 ```
 
-所有方法都是可选的。调用统一经过 `NS.adapterRegistry.invoke(providerKey, method, args)`：
+所有方法都是可选的。调用统一经过 Registry：
+
+- `scanFields(providerKey, context)`：Provider 优先的主扫描入口。Provider 可以完整返回字段，也可以调用 `context.genericScanFields()` 后增补或修正结果。Generic 实现直接调用现有 `NS.scanFields()`。
+- `captureControl(providerKey, field, context)`：更新 Snapshot 的字段读取入口。
+- `clearControl(providerKey, field, context)`：清空字段入口。
+- 其他方法通过 `NS.adapterRegistry.invoke(providerKey, method, args)` 调用。
+
+Provider-first 的回退顺序固定为：
 
 1. 先调用当前 Provider Adapter；
 2. 方法缺失、返回 `undefined` 或抛出异常时，回退 Generic；
 3. Generic 也无法处理时返回 `undefined`/安全失败值，由 Core 报告为 unsupported/manual。
+
+结构方法的同步边界固定如下：
+
+- 同步：`scanFields`、`getFieldContainers`、`getSection`、`getRepeaterItem`、`classifyControl`、`findAddButton`；
+- 可异步：`readControl`、`writeControl`、`verifyControl`、`captureControl`、`clearControl`。
+
+Registry 对同步结构方法使用 `invokeSync()`。如果 Provider 错误地返回 Promise，会立即视为该方法不可用并回退 Generic；`normalizeField()` 不等待也不保存 Promise，因此 `section`、`repeater`、`kind` 等描述字段始终是同步值。
 
 Provider Adapter 不应修改全局 `NS` 的匹配规则，也不应绕过 Core 的写后双回读验证。
 
@@ -78,7 +97,11 @@ Provider Adapter 不应修改全局 `NS` 的匹配规则，也不应绕过 Core 
 
 Generic 保留当前通用 scanner 结果的字段级行为：控件分类、读值、写值、验证和“添加经历”安全失败。Writer 将实际写入与验证核心实现暴露为内部 hook，由 Generic 调用；Provider Adapter 可以在字段级覆盖这些 Contract 方法。
 
-当前主流程统一通过 Registry 规范化扫描结果，并把 Registry 与 Provider key 传给 Writer。Matcher 仍负责 Schema/canonical path，Writer 仍负责节奏、控件动作和至少两次稳定回读。
+当前主流程统一通过 `adapterRegistry.scanFields()` 获取并规范化扫描结果，不再直接调用 `NS.scanFields()`。填写、读取和验证通过 Registry 传给 Writer；更新 Snapshot 的读取通过 `adapterRegistry.captureControl()` 传给 learn.js；清空通过 `adapterRegistry.clearControl()` 传给 Writer。Matcher 仍负责 Schema/canonical path，Writer 仍负责节奏、控件动作和至少两次稳定回读。
+
+Generic 的 `captureControl()` 保留现有 `captureValue()` 行为；Generic 的 `clearControl()` 保留通用安全清空能力。`file`、`unknown` 和其他不支持的 kind 返回失败，不会被计为已清空。空壳 Moka/Beisen 不实现这些方法，自动回退 Generic。
+
+`container`、控件动作和页面读取只存在运行时。Provider 可以返回自己的 FieldDescriptor，但不得把 DOM Element 或运行时 context 写入 storage。
 
 ## 学习范围
 
