@@ -606,7 +606,10 @@ async function testProviderReadWriteVerifyAndCapture(ctx, fixture) {
   assert.equal(await NS.adapterRegistry.invoke("beisen", "clearLocation", [hometown, {}]), true);
   assert.equal(NS.adapterRegistry.invoke("beisen", "readLocation", [hometown, {}]), "");
   assert.equal(hometown._beisenConfirmedLocation, undefined);
-  assert.equal(NS.resolvePath({ label: "籍贯", section: "个人信息", kind: "text" }, NS.mergedRules(seed, "moka")), null);
+  // moka 在 providers.moka 有显式别名「籍贯 → basicInfo.nativePlace」，新 matcher 的
+  // provider-ambiguous-override 放行显式别名（该字段为 manual-only，仅供 capture/规则视图）；
+  // generic 无别名仍必须拦截
+  assert.equal(NS.resolvePath({ label: "籍贯", section: "个人信息", kind: "text" }, NS.mergedRules(seed, "moka")), "basicInfo.nativePlace");
   assert.equal(NS.resolvePath({ label: "籍贯", section: "个人信息", kind: "text" }, NS.mergedRules(seed, "generic")), null);
 
   const pendingLocation = locationSelect(fixture.doc);

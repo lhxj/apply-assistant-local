@@ -61,7 +61,10 @@ async function testMatchingSafety() {
     assert.equal(ctx.window.__WSZ.resolvePath({ label, section: "个人信息", index: 0, kind: "select" }, merged), null);
   }
   const mokaMerged = ctx.window.__WSZ.mergedRules(seed, "moka");
-  assert.equal(ctx.window.__WSZ.resolvePath({ label: "籍贯", section: "个人信息", index: 0, kind: "select" }, mokaMerged), null);
+  // moka 有 providers.moka 显式别名「籍贯 → basicInfo.nativePlace」：新 matcher 的
+  // provider-ambiguous-override 放行显式别名（该字段实为 location_info 级联 manual-only，
+  // buildPlan 的 manualOnly 前置检查保证不会被填写，别名仅供 capture/规则视图）
+  assert.equal(ctx.window.__WSZ.resolvePath({ label: "籍贯", section: "个人信息", index: 0, kind: "select" }, mokaMerged), "basicInfo.nativePlace");
   assert.equal(
     ctx.window.__WSZ.resolvePath({ label: "意向工作城市", section: "未知区块", index: 0, kind: "select" }, mokaMerged),
     "intent.cities",
