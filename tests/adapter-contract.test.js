@@ -52,7 +52,9 @@ async function testRegistrySelectionAndFallback() {
   assert.equal(registry.get("moka").key, "moka");
   assert.equal(registry.get("beisen").key, "beisen");
   assert.equal(registry.get("unknown-platform").key, "generic");
-  assert.equal(registry.get("moka").writeControl, undefined);
+  // Moka Adapter 已实现（feat/moka-adapter）：writeControl 由空壳期的 undefined 变为真实实现；
+  // Generic fallback 仍由下面未实现方法/未知平台的断言覆盖。
+  assert.equal(typeof registry.get("moka").writeControl, "function");
   const genericContainers = registry.invoke("moka", "getFieldContainers", [{}]);
   assert.equal(Array.isArray(genericContainers), true);
   assert.equal(genericContainers.length, 0);
