@@ -31,7 +31,19 @@
     NS.panel.setFilling(true);
     NS.panel.status("扫描表单…");
     try {
-      const fields = scanFields();
+      let fields = scanFields();
+
+      // 条目补齐（Adapter 能力驱动）：快照经历条数多于页面时，由平台 Adapter
+      // 点击「添加」并重扫。不支持的提供商返回 undefined，自动跳过（如北森/Generic）。
+      if (snapshot && NS.adapterRegistry && typeof NS.adapterRegistry.invoke === "function") {
+        try {
+          const added = await NS.adapterRegistry.invoke(provider.key || "generic", "ensureItemCount", [fields, snapshot, { mergedRules: merged, document, provider }]);
+          if (added) {
+            NS.panel.status(`已自动添加 ${added} 个经历条目，重新扫描…`);
+            fields = scanFields();
+          }
+        } catch (e) { /* 条目补齐失败不阻塞填写 */ }
+      }
 
       const { plan, unmatched, noData, manual } = NS.buildPlan(fields, merged, snapshot);
       NS.panel.status(`识别 ${fields.length} 格 · 计划填写 ${plan.length} 格`);

@@ -83,7 +83,16 @@
         "addButtonText": "添加"
       },
       "aliases": {
-        "意向工作城市": "intent.cities"
+        "意向工作城市": "intent.cities",
+        "籍贯": "basicInfo.nativePlace"
+      },
+      "sectionAliases": {
+        "申请信息": "_flat",
+        "校招站点": "_flat",
+        "上传": "_flat",
+        "声明": "_flat",
+        "更新说明": "_flat",
+        "自我描述": "_flat"
       },
       "scopedAliases": {},
       "optionValueAliases": {}
