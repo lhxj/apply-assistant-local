@@ -157,10 +157,26 @@
     const providerKey = opts.providerKey || "generic";
     const context = Object.assign({}, opts, { field, providerKey });
     const actual = await registry.invoke(providerKey, "readControl", [field, context]);
+    if (field.readStateUnknown && actual == null) return true;
     if (actual === undefined) return NS.hasValue(field);
     if (typeof actual === "boolean") return actual;
     const text = String(actual == null ? "" : actual).trim();
     return text.length > 0 && !/^(请选择|请填写|选择|\/|--)$/.test(text);
+  }
+
+  async function hasExistingValueForClear(field, opts) {
+    const registry = opts && opts.adapterRegistry;
+    if (!registry) return NS.hasValue(field);
+    const providerKey = opts.providerKey || "generic";
+    const context = Object.assign({}, opts, { field, providerKey });
+    const actual = await registry.invoke(providerKey, "readControl", [field, context]);
+    // A provider may explicitly mark a custom control whose selected state is
+    // not safely readable. Treat it as existing so clear never guesses.
+    if (field.readStateUnknown && actual == null) return true;
+    if (actual === undefined) return field.readStateUnknown ? true : NS.hasValue(field);
+    if (typeof actual === "boolean") return actual || NS.hasValue(field);
+    const text = String(actual == null ? "" : actual).trim();
+    return (text.length > 0 && !/^(请选择|请填写|选择|\/|--)$/.test(text)) || NS.hasValue(field);
   }
 
   async function verifyStable(item, merged, opts) {
@@ -310,7 +326,7 @@
     for (let i = 0; i < fields.length; i++) {
       const f = fields[i];
       if (opts && opts.shouldCancel && opts.shouldCancel()) { results.cancelled = true; break; }
-      if (!NS.hasValue(f)) { opts && opts.onProgress && opts.onProgress(i, fields.length, f); continue; }
+      if (!(await hasExistingValueForClear(f, opts))) { opts && opts.onProgress && opts.onProgress(i, fields.length, f); continue; }
       let ok = false;
       try {
         const providerKey = (opts && opts.providerKey) || "generic";

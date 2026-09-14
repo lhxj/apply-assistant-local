@@ -1,6 +1,6 @@
-# Round 2.5 Adapter 协作底座
+# Adapter 协作底座（Round 2.5 / 2.6）
 
-本轮冻结的是 Core 与平台 Adapter 之间的协作边界，不实现任何具体 Moka/北森 DOM 逻辑。运行时链路保持：
+本文件冻结 Core 与平台 Adapter 之间的协作边界。Round 2.5/2.6 先建立接口；本轮 `beisen.js` 在真实样本 `BEISEN_REAL_SAMPLE_01` 上增加了保守的北森表单识别和控件处理。它不是“所有 zhiye.com 页面都可直接填报”的承诺，未被样本确认的控件仍然降级为 `unknown`/manual。
 
 ```text
 Core scanner
@@ -8,7 +8,7 @@ Core scanner
 Adapter Registry
   ├─ Generic
   ├─ Moka（空壳）
-  └─ Beisen（空壳）
+  └─ Beisen（真实样本确认的保守实现）
   ↓ provider-first、field-level fallback
 Core matcher → writer → verify
 Core learn → capture / clear
@@ -62,7 +62,7 @@ Registry 对同步结构方法使用 `invokeSync()`。如果 Provider 错误地�
 
 Provider Adapter 不应修改全局 `NS` 的匹配规则，也不应绕过 Core 的写后双回读验证。
 
-`NS.adapterRegistry.get("moka")`、`get("beisen")` 返回对应空壳；未知 key 返回 Generic。可以使用 `register(adapter)` 添加未来的 Provider 实现。
+`NS.adapterRegistry.get("moka")` 返回空壳；`get("beisen")` 返回真实样本确认的保守实现。未知 key 返回 Generic。可以使用 `register(adapter)` 添加未来的 Provider 实现。Beisen Adapter 只有在 `/form`、`.form-item`/`.form-item__text`/`.form-item__control` 与 Phoenix/生成表单证据同时满足时才进入表单扫描；zhiye.com 的职位详情页不会被当成填报页。
 
 ## FieldDescriptor
 
@@ -99,7 +99,7 @@ Generic 保留当前通用 scanner 结果的字段级行为：控件分类、读
 
 当前主流程统一通过 `adapterRegistry.scanFields()` 获取并规范化扫描结果，不再直接调用 `NS.scanFields()`。填写、读取和验证通过 Registry 传给 Writer；更新 Snapshot 的读取通过 `adapterRegistry.captureControl()` 传给 learn.js；清空通过 `adapterRegistry.clearControl()` 传给 Writer。Matcher 仍负责 Schema/canonical path，Writer 仍负责节奏、控件动作和至少两次稳定回读。
 
-Generic 的 `captureControl()` 保留现有 `captureValue()` 行为；Generic 的 `clearControl()` 保留通用安全清空能力。`file`、`unknown` 和其他不支持的 kind 返回失败，不会被计为已清空。空壳 Moka/Beisen 不实现这些方法，自动回退 Generic。
+Generic 的 `captureControl()` 保留现有 `captureValue()` 行为；Generic 的 `clearControl()` 保留通用安全清空能力。`file`、`unknown` 和其他不支持的 kind 返回失败，不会被计为已清空。空壳 Moka 不实现这些方法，自动回退 Generic；Beisen 对本样本确认的 Phoenix text/textarea/select/date/radio/checkbox 提供 provider-first 处理，file、声明、提交、验证码仍 manual-only。
 
 `container`、控件动作和页面读取只存在运行时。Provider 可以返回自己的 FieldDescriptor，但不得把 DOM Element 或运行时 context 写入 storage。
 
@@ -173,7 +173,15 @@ tests/moka-adapter.test.js
 tests/beisen-adapter.test.js
 ```
 
-以及各自 provider rule。空壳文件本轮不包含平台选择器。
+以及各自 provider rule。Beisen 的选择器只使用真实样本确认的结构关系和语义 class，不使用客户名、职位 ID、随机 group id 或 hash class 作为长期 identity。
+
+## Beisen 样本规则边界
+
+- `BEISEN_REAL_SAMPLE_01`：`flyaitalent.zhiye.com/form`，只保存 hostname/path/query key，不保存 query value 或表单个人数据。
+- sample-confirmed：`.form-item` 字段边界、`.form-item__text` 标签、`.form-item__control` 控件容器、Phoenix select/radio/textarea/file 结构、`div.form[id*="Recruitment_extPerfect"]` 重复组、body portal 下的 `.phoenix-selectList__listItem` 候选。
+- 保守推断：同一 section 的 DOM 顺序用于当前运行时 `itemIndex`；后续仍需第二个北森站点和新增/删除后的样本复核。
+- 未确认：cascader、验证码、错误态、已选 radio 的真实 class 变体、已填日期/下拉的全部回读格式。未确认内容不自动升级为可填写规则。
+- Generic 的 `ensureItemCount` 和所有 Adapter 的 `addItem` 仍关闭。
 
 ## Core Change Request
 

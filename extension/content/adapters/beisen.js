@@ -1,13 +1,637 @@
-/* 网申助手 · 北森 Adapter 占位壳
- * Round 2.5 不放入任何北森 DOM 选择器或平台行为。
+/* 网申助手 · 北森 Adapter
+ *
+ * 这份实现只使用 BEISEN_REAL_SAMPLE_01 中确认过的结构：
+ * .form-item / .form-item__text / .form-item__control 以及 Phoenix 组件的
+ * 语义 class。随机生成的 group id、客户名称、职位 id 和 hash class 不参与
+ * 字段 identity。没有被确认的控件仍返回 unknown/manual。
  */
 (function () {
   const NS = (window.__WSZ = window.__WSZ || {});
   NS.adapterDefinitions = NS.adapterDefinitions || {};
-  NS.adapterDefinitions.beisen = {
+
+  const FORM_GROUP_SELECTOR = 'div.form[id*="Recruitment_extPerfect"]';
+  const FORM_ITEM_SELECTOR = ".form-item";
+  const SELECT_SELECTOR = ".phoenix-select";
+  const RADIO_ITEM_SELECTOR = ".phoenix-radio-group__radioItem";
+  const DATE_LABELS = new Set(["出生日期", "出生年月", "开始时间", "结束时间", "获奖时间", "获得时间"]);
+  const SECTION_DEFS = [
+    { label: "个人信息", key: "_flat", repeatable: false },
+    { label: "求职意向", key: "_flat", repeatable: false },
+    { label: "上传简历", key: "_flat", repeatable: false },
+    { label: "教育经历", key: "education", repeatable: true },
+    { label: "实习经历", key: "internship", repeatable: true },
+    { label: "项目经历", key: "project", repeatable: true },
+    { label: "工作经历", key: "work", repeatable: true },
+    { label: "获奖情况", key: "award", repeatable: true },
+    { label: "技能", key: "skills", repeatable: true },
+    { label: "证书", key: "certificates", repeatable: true },
+    { label: "语言能力", key: "language", repeatable: true },
+    { label: "声明", key: "_flat", repeatable: false },
+    { label: "提交", key: "_flat", repeatable: false },
+  ];
+  const SECTION_BY_LABEL = Object.fromEntries(SECTION_DEFS.map((item) => [item.label, item]));
+
+  function docOf(context) {
+    if (context && context.document) return context.document;
+    return typeof document !== "undefined" ? document : null;
+  }
+
+  function locationOf(context) {
+    if (context && context.location) return context.location;
+    return typeof location !== "undefined" ? location : {};
+  }
+
+  function qsa(root, selector) {
+    if (!root || typeof root.querySelectorAll !== "function") return [];
+    try { return Array.from(root.querySelectorAll(selector)); } catch (e) { return []; }
+  }
+
+  function first(root, selector) {
+    const values = qsa(root, selector);
+    return values[0] || null;
+  }
+
+  function normalize(value) {
+    return NS.normalizeLabel ? NS.normalizeLabel(value) : String(value || "").replace(/[\s*＊:：]/g, "");
+  }
+
+  function classText(element) {
+    return element && typeof element.className === "string" ? element.className : "";
+  }
+
+  function isVisible(element) {
+    if (!element) return false;
+    try {
+      if (typeof NS.isVisible === "function" && NS.isVisible(element)) return true;
+    } catch (e) { /* fall through to the conservative local check */ }
+    if (element.hidden) return false;
+    const style = element.style || {};
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    return true;
+  }
+
+  function hostMatches(host, pattern) {
+    if (typeof NS.hostMatchesPattern === "function") return NS.hostMatchesPattern(host, pattern);
+    const h = String(host || "").toLowerCase().replace(/\.$/, "");
+    const p = String(pattern || "").toLowerCase().replace(/^\*\./, "").replace(/\.$/, "");
+    return Boolean(h && p) && (h === p || h.endsWith("." + p));
+  }
+
+  function isBeisenHost(context) {
+    const host = locationOf(context).hostname;
+    return ["zhiye.com", "italent.cn", "beisen.com"].some((pattern) => hostMatches(host, pattern));
+  }
+
+  function textOf(element) {
+    if (!element) return "";
+    return String(element.textContent || element.value || "").trim();
+  }
+
+  function exactSection(value) {
+    const label = normalize(value);
+    return SECTION_BY_LABEL[label] ? label : "";
+  }
+
+  function contains(parent, child) {
+    return Boolean(parent && child && typeof parent.contains === "function" && parent.contains(child));
+  }
+
+  function closest(element, selector) {
+    if (!element) return null;
+    if (typeof element.closest === "function") {
+      try { return element.closest(selector); } catch (e) { /* use the parent walk */ }
+    }
+    for (let current = element; current; current = current.parentElement) {
+      if (typeof current.matches === "function") {
+        try { if (current.matches(selector)) return current; } catch (e) { /* ignore */ }
+      }
+    }
+    return null;
+  }
+
+  function groupOf(element) {
+    const matched = closest(element, FORM_GROUP_SELECTOR);
+    if (matched) return matched;
+    for (let current = element; current; current = current.parentElement) {
+      const classes = classText(current).split(/\s+/).filter(Boolean);
+      if (classes.includes("form") && String(current.id || "").includes("Recruitment_extPerfect")) return current;
+    }
+    return null;
+  }
+
+  function allGroups(doc) {
+    const values = qsa(doc, FORM_GROUP_SELECTOR).concat(qsa(doc, "div.form").filter((element) => String(element.id || "").includes("Recruitment_extPerfect")));
+    return values.filter((element, index, all) => all.indexOf(element) === index);
+  }
+
+  // The section title is a sibling of the generated form subtree. Search the
+  // nearest ancestor first; never use the customer name or a random group id.
+  function sectionTitleForGroup(group) {
+    if (!group) return "";
+    for (let parent = group.parentElement, depth = 0; parent && depth < 10; parent = parent.parentElement, depth++) {
+      const direct = parent.children ? Array.from(parent.children) : [];
+      const candidates = direct.concat(qsa(parent, "*")).filter((el, index, all) => all.indexOf(el) === index);
+      for (const candidate of candidates) {
+        if (candidate === group || contains(group, candidate)) continue;
+        const section = exactSection(textOf(candidate));
+        if (section) return section;
+      }
+    }
+    return "";
+  }
+
+  function sectionTitleForElement(element) {
+    const group = groupOf(element);
+    if (group) return sectionTitleForGroup(group);
+    for (let parent = element && element.parentElement, depth = 0; parent && depth < 8; parent = parent.parentElement, depth++) {
+      const section = exactSection(textOf(parent));
+      if (section) return section;
+      const candidate = qsa(parent, "*").map((el) => exactSection(textOf(el))).find(Boolean);
+      if (candidate) return candidate;
+    }
+    return "";
+  }
+
+  function sectionInfoForElement(element) {
+    const section = sectionTitleForElement(element);
+    const definition = SECTION_BY_LABEL[section];
+    return {
+      section,
+      sectionKey: definition ? definition.key : null,
+      group: groupOf(element),
+    };
+  }
+
+  function controlAvailable(element) {
+    if (isVisible(element)) return true;
+    // Phoenix uploads keep the real file input hidden inside a visible uploader.
+    if (element && String(element.type || "").toLowerCase() === "file") {
+      return isVisible(closest(element, ".form-item")) || isVisible(element.parentElement);
+    }
+    return false;
+  }
+
+  function directTextControls(item) {
+    return qsa(item, "input, textarea").filter((element) => {
+      const type = String(element.type || "").toLowerCase();
+      if (["hidden", "file", "checkbox", "radio", "submit", "button", "reset"].includes(type)) return false;
+      if (closest(element, SELECT_SELECTOR)) return false;
+      return controlAvailable(element);
+    });
+  }
+
+  function controlParts(item) {
+    const fileControls = qsa(item, 'input[type="file"]').filter(controlAvailable);
+    const checkboxControls = qsa(item, 'input[type="checkbox"]').filter(controlAvailable);
+    const radioControls = qsa(item, RADIO_ITEM_SELECTOR).filter(controlAvailable);
+    const selectComponents = qsa(item, SELECT_SELECTOR).filter(isVisible);
+    const selectControls = selectComponents.map((component) => first(component, ".phoenix-select__input") || component);
+    const textControls = directTextControls(item);
+    let controls = [];
+    controls = controls.concat(textControls, selectControls, radioControls, checkboxControls, fileControls);
+    if (!controls.length) {
+      const controlWrapper = first(item, ".form-item__control");
+      if (controlWrapper) controls.push(controlWrapper);
+    }
+    return {
+      controls: controls.filter((element, index, all) => all.indexOf(element) === index),
+      textControls,
+      selectComponents,
+      selectControls,
+      radioControls,
+      checkbox: checkboxControls[0] || null,
+      fileControls,
+    };
+  }
+
+  function itemLabel(item) {
+    const labelNode = first(item, ".form-item__text") || first(item, ".form-item__title");
+    const titleNode = first(item, ".form-item__title");
+    const label = normalize(textOf(labelNode));
+    const rawLabel = textOf(titleNode || labelNode) || label;
+    return { label, rawLabel, titleNode };
+  }
+
+  function requiredOf(titleNode, rawLabel) {
+    if (Boolean(titleNode && /required/i.test(classText(titleNode))) || /[*＊]/.test(rawLabel || "")) return true;
+    // The sample exposes some required state through AX/CSS behavior rather
+    // than a stable DOM attribute. Do not convert that absence into false.
+    return null;
+  }
+
+  function kindOf(label, parts) {
+    if (parts.fileControls.length) return "file";
+    if (parts.radioControls.length) return "radio";
+    if (parts.checkbox && parts.controls.length === 1) return "checkbox";
+    if (parts.textControls.some((element) => String(element.tagName || "").toUpperCase() === "TEXTAREA")) return "textarea";
+    if (parts.selectControls.length && !parts.textControls.length) return DATE_LABELS.has(normalize(label)) ? "date" : "select";
+    if (parts.textControls.length) return parts.textControls.some((element) => String(element.tagName || "").toUpperCase() === "TEXTAREA") ? "textarea" : "text";
+    return "unknown";
+  }
+
+  function groupsForSection(doc, section) {
+    return allGroups(doc).filter((group) => sectionTitleForGroup(group) === section);
+  }
+
+  function repeaterFor(element, context, sectionInfo) {
+    const group = sectionInfo.group || groupOf(element);
+    const sectionKey = (context && context.sectionKey) || sectionInfo.sectionKey;
+    const definition = SECTION_BY_LABEL[sectionInfo.section];
+    if (!group || !definition || !definition.repeatable || !sectionKey || sectionKey === "_flat") {
+      return { itemIndex: null, itemElement: null };
+    }
+    const doc = docOf(context);
+    const groups = groupsForSection(doc, sectionInfo.section);
+    const itemIndex = Math.max(0, groups.indexOf(group));
+    return { itemIndex, itemElement: group };
+  }
+
+  function descriptorForItem(item, context) {
+    const labels = itemLabel(item);
+    const parts = controlParts(item);
+    const info = sectionInfoForElement(item);
+    const repeater = repeaterFor(item, context, info);
+    const kind = kindOf(labels.label, parts);
+    const itemIndex = repeater.itemIndex == null ? null : repeater.itemIndex;
+    return {
+      provider: "beisen",
+      section: info.section,
+      sectionKey: info.sectionKey === "_flat" ? null : info.sectionKey,
+      repeater,
+      identity: { sectionKey: info.sectionKey === "_flat" ? null : info.sectionKey, itemIndex, fieldKey: labels.label },
+      label: labels.label,
+      rawLabel: labels.rawLabel,
+      kind,
+      container: item,
+      controls: parts.controls,
+      required: requiredOf(labels.titleNode, labels.rawLabel),
+      confidence: kind === "unknown" ? 0.25 : 0.95,
+      confidenceReason: "真实样本确认的 .form-item / label / control 结构",
+      textControls: parts.textControls,
+      selectComponents: parts.selectComponents,
+      selectControls: parts.selectControls,
+      radioControls: parts.radioControls,
+      checkbox: parts.checkbox,
+      fileControls: parts.fileControls,
+    };
+  }
+
+  function safetyDescriptor(label, section, kind, element, extra) {
+    return Object.assign({
+      provider: "beisen",
+      section,
+      sectionKey: null,
+      repeater: { itemIndex: null, itemElement: null },
+      identity: { sectionKey: null, itemIndex: null, fieldKey: label },
+      label,
+      rawLabel: label,
+      kind,
+      container: element,
+      controls: element ? [element] : [],
+      required: false,
+      confidence: 0.95,
+      confidenceReason: "真实样本确认的安全边界控件",
+      manualOnly: true,
+    }, extra || {});
+  }
+
+  function uploadLabel(element) {
+    for (let parent = element && element.parentElement, depth = 0; parent && depth < 8; parent = parent.parentElement, depth++) {
+      const text = normalize(textOf(parent));
+      if (text.includes("上传简历")) return "上传简历";
+      if (text.includes("证件照")) return "证件照";
+    }
+    return "附件上传";
+  }
+
+  function declarationDescriptor(doc, covered) {
+    const checkbox = qsa(doc, 'input[type="checkbox"]').find((element) => {
+      if (covered.has(element) || groupOf(element) || closest(element, FORM_ITEM_SELECTOR)) return false;
+      for (let parent = element.parentElement, depth = 0; parent && depth < 6; parent = parent.parentElement, depth++) {
+        if (/声明|实际情况|调查核实/.test(textOf(parent))) return true;
+      }
+      return false;
+    });
+    if (!checkbox) return null;
+    covered.add(checkbox);
+    return safetyDescriptor("声明", "声明", "checkbox", checkbox, {
+      checkbox,
+      safetyRole: "declaration",
+    });
+  }
+
+  function repeatCheckboxDescriptors(doc, covered, context) {
+    const out = [];
+    for (const checkbox of qsa(doc, 'input[type="checkbox"]')) {
+      if (covered.has(checkbox) || !groupOf(checkbox) || closest(checkbox, FORM_ITEM_SELECTOR)) continue;
+      const info = sectionInfoForElement(checkbox);
+      const repeater = repeaterFor(checkbox, context, info);
+      covered.add(checkbox);
+      out.push(Object.assign(safetyDescriptor("至今", info.section, "checkbox", checkbox, { checkbox, manualOnly: false }), {
+        sectionKey: info.sectionKey === "_flat" ? null : info.sectionKey,
+        repeater,
+        identity: { sectionKey: info.sectionKey === "_flat" ? null : info.sectionKey, itemIndex: repeater.itemIndex, fieldKey: "至今" },
+        confidenceReason: "真实样本确认的重复经历结束状态 checkbox",
+      }));
+    }
+    return out;
+  }
+
+  function outsideFileDescriptors(doc, covered) {
+    const out = [];
+    for (const file of qsa(doc, 'input[type="file"]')) {
+      if (covered.has(file)) continue;
+      covered.add(file);
+      const label = uploadLabel(file);
+      out.push(safetyDescriptor(label, label === "上传简历" ? "上传简历" : "", "file", file, {
+        fileControls: [file],
+        manualOnly: true,
+        safetyRole: "file",
+      }));
+    }
+    return out;
+  }
+
+  function submitDescriptor(doc, covered) {
+    const button = qsa(doc, 'button, input[type="submit"], [role="button"]').find((element) => {
+      if (covered.has(element) || !isVisible(element)) return false;
+      return /提交申请|预览并提交|最终确认/.test(normalize(textOf(element)));
+    });
+    if (!button) return null;
+    covered.add(button);
+    return safetyDescriptor(normalize(textOf(button)), "提交", "unknown", button, { safetyRole: "submit" });
+  }
+
+  function captchaDescriptor(doc, covered) {
+    const input = qsa(doc, "input").find((element) => {
+      if (covered.has(element)) return false;
+      const hint = normalize(`${element.placeholder || ""} ${textOf(element.parentElement)}`);
+      return hint.includes("验证码");
+    });
+    if (!input) return null;
+    covered.add(input);
+    return safetyDescriptor("验证码", "安全校验", "unknown", input, { safetyRole: "captcha" });
+  }
+
+  function formEvidence(context) {
+    const doc = docOf(context);
+    const loc = locationOf(context);
+    const pathname = String(loc.pathname || "");
+    const hasWrapper = Boolean(doc && typeof doc.querySelector === "function" && doc.querySelector(".form-item .form-item__text") && doc.querySelector(".form-item .form-item__control"));
+    const hasGeneratedGroup = Boolean(doc && allGroups(doc).length);
+    const hasPhoenix = Boolean(doc && typeof doc.querySelector === "function" && doc.querySelector('[class*="phoenix-"]'));
+    const hasBrand = Boolean(doc && doc.body && /Powered\s+by\s+Beisen/i.test(doc.body.textContent || ""));
+    const pathLooksLikeForm = pathname === "/form" || /\/form\/$/.test(pathname);
+    let status = "BEISEN_UNCERTAIN";
+    if (isBeisenHost(context) && !pathLooksLikeForm) status = "BEISEN_SITE_NON_FORM";
+    else if (isBeisenHost(context) && pathLooksLikeForm && hasWrapper && (hasGeneratedGroup || hasPhoenix || hasBrand)) status = "BEISEN_FORM_CONFIRMED";
+    return {
+      status,
+      evidence: { pathLooksLikeForm, hasWrapper, hasGeneratedGroup, hasPhoenix, hasBrand },
+    };
+  }
+
+  function normalizeDate(value) {
+    if (NS.parseYearMonth) {
+      const parsed = NS.parseYearMonth(value);
+      if (parsed) return `${parsed.y}.${String(parsed.m).padStart(2, "0")}`;
+    }
+    return normalize(value);
+  }
+
+  function selectShownText(field) {
+    const component = field.selectComponents && field.selectComponents[0]
+      ? field.selectComponents[0]
+      : (field.selectControls && field.selectControls[0] ? closest(field.selectControls[0], SELECT_SELECTOR) : null);
+    const candidates = component ? qsa(component, ".phoenix-select__placeHolder, .phoenix-select__singleLabel, .phoenix-select__value, .phoenix-select__content") : [];
+    for (const candidate of candidates) {
+      const text = normalize(textOf(candidate));
+      if (text && !/^(请选择|选择|请填写)$/.test(text)) return text;
+    }
+    const input = field.selectControls && field.selectControls[0];
+    const value = normalize(input && input.value);
+    return /^(请选择|选择|请填写)$/.test(value) ? "" : value;
+  }
+
+  function radioOptionText(element) {
+    return normalize(textOf(first(element, ".phoenix-radio__radio-text") || element));
+  }
+
+  function radioState(element) {
+    const native = first(element, 'input[type="radio"]');
+    if (native) return Boolean(native.checked);
+    const nodes = [element, first(element, ".phoenix-radio")].filter(Boolean);
+    for (const node of nodes) {
+      if (node.getAttribute && (node.getAttribute("aria-checked") === "true" || node.getAttribute("data-checked") === "true" || node.getAttribute("data-selected") === "true")) return true;
+      if (node.getAttribute && (node.getAttribute("aria-checked") === "false" || node.getAttribute("data-checked") === "false" || node.getAttribute("data-selected") === "false")) return false;
+      const tokens = classText(node).split(/\s+/).filter(Boolean);
+      if (tokens.some((token) => /(^|--)(checked|selected|is-checked|isSelected|active)$/.test(token) || /phoenix-radio--(checked|selected|active)/.test(token))) return true;
+      if (tokens.some((token) => /(^|--)(unchecked|unselected|is-unchecked)$/.test(token))) return false;
+    }
+    return null;
+  }
+
+  function readRadio(field) {
+    let unknown = false;
+    let selected = null;
+    for (const option of field.radioControls || []) {
+      const state = radioState(option);
+      if (state === null) unknown = true;
+      if (state === true) selected = radioOptionText(option);
+    }
+    field.readStateUnknown = unknown && !selected;
+    // null is an intentional provider result. Registry treats undefined as
+    // "method unavailable" and would fall back to Generic, which cannot read
+    // this custom radio. The caller treats null as empty-but-unverified.
+    return selected || (unknown ? null : "");
+  }
+
+  function readControl(field) {
+    if (!field) return undefined;
+    if (field.kind === "text" || field.kind === "textarea") {
+      const input = field.textControls && field.textControls[0];
+      return input ? String(input.value || "").trim() : "";
+    }
+    if (field.kind === "select") return selectShownText(field);
+    if (field.kind === "date") {
+      const value = selectShownText(field);
+      return value ? normalizeDate(value) : "";
+    }
+    if (field.kind === "radio") return readRadio(field);
+    if (field.kind === "checkbox") return Boolean(field.checkbox && field.checkbox.checked);
+    if (field.kind === "file") return Boolean((field.fileControls || []).some((input) => input.files && input.files.length));
+    return undefined;
+  }
+
+  function dispatchClick(element) {
+    if (!element || typeof element.click !== "function") return false;
+    try {
+      if (typeof MouseEvent !== "undefined" && element.dispatchEvent) element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    } catch (e) { /* click below is the important operation */ }
+    element.click();
+    return true;
+  }
+
+  function closePopup(doc) {
+    try {
+      const active = doc && doc.activeElement;
+      if (active && active.dispatchEvent && typeof KeyboardEvent !== "undefined") {
+        active.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      }
+    } catch (e) { /* do not click the page body: that could affect another field */ }
+  }
+
+  async function pickFromPopup(field, value, context) {
+    const doc = docOf(context);
+    const component = field.selectComponents && field.selectComponents[0]
+      ? field.selectComponents[0]
+      : (field.selectControls && field.selectControls[0] ? closest(field.selectControls[0], SELECT_SELECTOR) : null);
+    if (!component || !dispatchClick(component)) return false;
+    const want = field.kind === "date" ? normalizeDate(value) : normalize(NS.toOptionText ? NS.toOptionText(context && context.merged || {}, value) : value);
+    const deadline = Date.now() + 2500;
+    while (Date.now() < deadline) {
+      const options = qsa(doc, ".phoenix-selectList__listItem").filter(isVisible);
+      const matches = options.filter((option) => {
+        const optionText = field.kind === "date" ? normalizeDate(textOf(option)) : normalize(textOf(option));
+        return optionText === want;
+      });
+      if (matches.length === 1) return dispatchClick(matches[0]);
+      if (matches.length > 1) { closePopup(doc); return false; }
+      if (NS.sleep) await NS.sleep(60);
+    }
+    closePopup(doc);
+    return false;
+  }
+
+  async function writeRadio(field, value, context) {
+    const want = normalize(NS.toOptionText ? NS.toOptionText(context && context.merged || {}, value) : value);
+    const matches = (field.radioControls || []).filter((option) => radioOptionText(option) === want);
+    if (matches.length !== 1) return false;
+    return dispatchClick(matches[0]);
+  }
+
+  function verifyControl(field, value, context) {
+    const actual = context && Object.prototype.hasOwnProperty.call(context, "actual") ? context.actual : readControl(field);
+    if (actual === undefined) return false;
+    const kind = (context && context.kind) || field.kind;
+    if (kind === "text" || kind === "textarea") return String(actual).trim() === String(value).trim();
+    if (kind === "select" || kind === "radio") return normalize(actual) === normalize(NS.toOptionText ? NS.toOptionText(context && context.merged || {}, value) : value);
+    if (kind === "date") return normalizeDate(actual) === normalizeDate(value);
+    if (kind === "checkbox") return Boolean(actual) === Boolean(value);
+    return false;
+  }
+
+  async function clearSelect(field, context) {
+    const current = selectShownText(field);
+    if (!current) return true;
+    const component = field.selectComponents && field.selectComponents[0];
+    const clear = component && first(component, ".phoenix-select__clearIcon");
+    if (!clear || !isVisible(clear) || !dispatchClick(clear)) return false;
+    if (NS.sleep) await NS.sleep(80);
+    return !selectShownText(field);
+  }
+
+  const beisen = {
     key: "beisen",
     capabilities: {
-      addItem: { education: false, work: false, internship: false, project: false },
+      addItem: {
+        education: false, work: false, internship: false, project: false,
+        award: false, skills: false, certificates: false, language: false,
+      },
+    },
+
+    getFormState(context) {
+      return formEvidence(context || {});
+    },
+
+    scanFields(context) {
+      const ctx = context || {};
+      const state = formEvidence(ctx);
+      if (state.status !== "BEISEN_FORM_CONFIRMED") return isBeisenHost(ctx) ? [] : undefined;
+      const doc = docOf(ctx);
+      const fields = [];
+      const covered = new Set();
+      for (const item of qsa(doc, FORM_ITEM_SELECTOR)) {
+        if (!isVisible(item)) continue;
+        covered.add(item);
+        for (const control of qsa(item, "input, textarea, select, .phoenix-select, .phoenix-radio-group__radioItem")) covered.add(control);
+        fields.push(descriptorForItem(item, ctx));
+      }
+      fields.push(...repeatCheckboxDescriptors(doc, covered, ctx));
+      const declaration = declarationDescriptor(doc, covered);
+      if (declaration) fields.push(declaration);
+      fields.push(...outsideFileDescriptors(doc, covered));
+      const captcha = captchaDescriptor(doc, covered);
+      if (captcha) fields.push(captcha);
+      const submit = submitDescriptor(doc, covered);
+      if (submit) fields.push(submit);
+      return fields;
+    },
+
+    getFieldContainers(context) {
+      const doc = docOf(context);
+      return qsa(doc, FORM_ITEM_SELECTOR).filter(isVisible);
+    },
+
+    getSection(container, context) {
+      const field = context && context.field;
+      if (field && field.safetyRole) return { section: field.section || "", sectionKey: "_flat" };
+      const info = sectionInfoForElement(container);
+      if (!info.section && field) return { section: field.section || "", sectionKey: field.sectionKey || null };
+      return { section: info.section, sectionKey: info.sectionKey };
+    },
+
+    getRepeaterItem(container, context) {
+      const field = context && context.field;
+      if (field && field.safetyRole) return { itemIndex: null, itemElement: null };
+      const info = sectionInfoForElement(container);
+      return repeaterFor(container, context || {}, info);
+    },
+
+    classifyControl(field) {
+      return field && field.kind ? field.kind : "unknown";
+    },
+
+    readControl(field) {
+      return readControl(field);
+    },
+
+    captureControl(field) {
+      return readControl(field);
+    },
+
+    async writeControl(field, value, context) {
+      if (!field || field.manualOnly || field.safetyRole === "file" || field.safetyRole === "submit" || field.safetyRole === "declaration" || field.safetyRole === "captcha") return false;
+      const kind = (context && context.kind) || field.kind;
+      if (kind === "text" || kind === "textarea" || kind === "checkbox") {
+        return Boolean(NS.writeControlCore && await NS.writeControlCore(field, value, Object.assign({}, context || {}, { kind })));
+      }
+      if (kind === "select" || kind === "date") return pickFromPopup(field, value, context || {});
+      if (kind === "radio") return writeRadio(field, value, context || {});
+      return false;
+    },
+
+    verifyControl(field, value, context) {
+      return verifyControl(field, value, context || {});
+    },
+
+    async clearControl(field, context) {
+      if (!field || field.manualOnly || field.safetyRole) return false;
+      const kind = (context && context.kind) || field.kind;
+      if (kind === "text" || kind === "textarea" || kind === "checkbox") {
+        return Boolean(NS.clearControlCore && await NS.clearControlCore(field, Object.assign({}, context || {}, { kind })));
+      }
+      if (kind === "select" || kind === "date") return clearSelect(field, context || {});
+      return false;
+    },
+
+    // Add buttons are visible in the real sample, but auto-add is deliberately
+    // disabled until a later round proves click, rescan and verification.
+    findAddButton() {
+      return null;
     },
   };
+
+  NS.beisenFormState = formEvidence;
+  NS.adapterDefinitions.beisen = beisen;
 })();
