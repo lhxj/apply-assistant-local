@@ -121,7 +121,9 @@ class FakeElement {
     if (nots.some((inner) => this.matchesSimple(inner))) return false;
     const tag = current.match(/^([a-zA-Z][\w-]*|\*)/);
     if (tag && tag[1] !== "*" && this.tagName !== tag[1].toUpperCase()) return false;
-    for (const cls of [...current.matchAll(/\.([\w-]+)/g)]) {
+    // 类名匹配前剔除属性选择器，避免属性值里的点（如 sugar.select.label）被误当类名
+    const withoutAttrs = current.replace(/\[[^\]]*\]/g, "");
+    for (const cls of [...withoutAttrs.matchAll(/\.([\w-]+)/g)]) {
       if (!this.classList.contains(cls[1])) return false;
     }
     for (const attr of [...current.matchAll(/\[([^\]=~*]+)(?:(\*=|=)"?([^\]]*)"?)?\]/g)]) {
@@ -220,16 +222,56 @@ function sdSelect(options, shown) {
   return { dropdown, component, display, input, clear };
 }
 
+// Moka 年月下拉：选项是 span[data-key="sugar.select.label"]（无 option-label 类），
+// 年份列表为虚拟滚动——初始只渲染头部几项，向输入框键入文本过滤后目标年份才出现。
+function sdYmSelect(allOptions, initialOptions) {
+  const display = el("span", { className: `sd-Input-display-value-${hash()}` }, el("span", { text: "" }));
+  const input = el("input", { className: `sd-Input-input-${hash()}`, type: "text", placeholder: "请选择" });
+  const clear = el("span", { className: `sd-Input-clear-${hash()}` });
+  const component = el("label", { className: `sd-Input-container-${hash()} sd-Select-container-${hash()}` }, display, input, clear);
+  const dropdown = el("div", { className: `sd-Dropdown-container-${hash()}` }, component);
+  let menu = null;
+  const renderMenu = (values) => {
+    if (menu) menu.remove();
+    menu = el("div", { className: `sd-Select-menu-${hash()}` });
+    for (const value of values) {
+      const option = el("span", { attributes: { "data-key": "sugar.select.label" }, text: value });
+      option.onClick = () => {
+        display.children[0]._text = value;
+        if (menu) { menu.remove(); menu = null; }
+      };
+      menu.append(option);
+    }
+    dropdown.append(menu);
+  };
+  component.onClick = () => { if (!menu) renderMenu(initialOptions || allOptions); };
+  input.onEvent = (event) => {
+    if (event.type !== "input" || !menu) return;
+    const q = String(input.value || "").trim();
+    renderMenu(q ? allOptions.filter((v) => v.includes(q)) : (initialOptions || allOptions));
+  };
+  clear.onClick = () => { display.children[0]._text = ""; };
+  return { dropdown, component, display, input, clear };
+}
+
+// 年份虚拟列表：从 2126 倒序渲染，初始可见窗口不含求职相关年份
+function virtualYears() {
+  const all = [];
+  for (let y = 2126; y >= 2018; y--) all.push(String(y));
+  return { all, initial: all.slice(0, 3) };
+}
+
 function selectField(label, options, semantic) {
   const s = sdSelect(options);
   return { field: el("div", { className: `apply-field-${hash()} ${semantic || "Select"}-${hash()} apply-filed-padding-${hash()}` },
     titleEl(label), el("div", { className: `ctrl-${hash()}` }, s.dropdown)), select: s };
 }
 
-// date_info：单点年月（2 个下拉）
+// date_info：单点年月（2 个下拉）；年份走虚拟列表（初始窗口不含 2024，必须输入过滤）
 function monthField(label) {
-  const year = sdSelect(["2023", "2024", "2025"]);
-  const month = sdSelect(["9", "10", "11"]);
+  const years = virtualYears();
+  const year = sdYmSelect(years.all, years.initial);
+  const month = sdYmSelect(["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]);
   return { field: el("div", { className: `apply-field-${hash()} date_info-${hash()} apply-filed-padding-${hash()}` },
     titleEl(label),
     el("div", { className: `ctrl-${hash()}` },
@@ -239,12 +281,13 @@ function monthField(label) {
     year, month };
 }
 
-// date_info：起止年月（4 个下拉 + 至今 checkbox）
+// date_info：起止年月（4 个下拉 + 至今 checkbox）；年月选项同为 data-key span
 function rangeField(label) {
-  const sy = sdSelect(["2020", "2021", "2022"]);
-  const sm = sdSelect(["7", "8", "9"]);
-  const ey = sdSelect(["2021", "2022", "2023"]);
-  const em = sdSelect(["5", "6", "7"]);
+  const months = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
+  const sy = sdYmSelect(["2022", "2021", "2020", "2019"]);
+  const sm = sdYmSelect(months);
+  const ey = sdYmSelect(["2023", "2022", "2021", "2020"]);
+  const em = sdYmSelect(months);
   const forever = el("input", { type: "checkbox" });
   forever.onClick = () => { forever.checked = !forever.checked; };
   return { field: el("div", { className: `apply-field-${hash()} date_info-${hash()} apply-filed-padding-${hash()} full-width-field-${hash()}` },
@@ -372,7 +415,9 @@ function makeContext(fixture) {
   loadScript("extension/content/writer.js", ctx);
   loadScript("extension/content/learn.js", ctx);
   ctx.window.__WSZ.sleep = async () => {};
-  ctx.window.__WSZ.emitInputEvents = () => {};
+  ctx.window.__WSZ.emitInputEvents = (target) => {
+    for (const type of ["input", "change"]) target.dispatchEvent(new ctx.Event(type, { bubbles: true }));
+  };
   return ctx;
 }
 
@@ -519,6 +564,31 @@ async function testDateRangeAndForever(ctx, fixture) {
   assert.equal(fixture.eduRange2.forever.checked, true);
 }
 
+async function testVirtualYearListFilter(ctx, fixture) {
+  const NS = ctx.window.__WSZ;
+  const merged = NS.mergedRules(seed, "moka");
+  const fields = scan(ctx, fixture);
+  const org = fields.find((f) => f.label === "参加组织时间");
+  // 初始渲染不含目标年份（虚拟滚动列表，从 2126 倒序）
+  fixture.orgTime.year.component.click();
+  const visible = fixture.orgTime.year.dropdown.querySelectorAll('[data-key="sugar.select.label"]').map((o) => o.textContent);
+  assert.equal(visible.includes("2024"), false, "初始选项不得包含 2024");
+  // 写入走输入过滤路径后点选成功
+  assert.equal(await NS.adapterRegistry.invoke("moka", "writeControl", [org, "2024.09", { merged, kind: "date" }]), true);
+  assert.equal(await NS.adapterRegistry.invoke("moka", "readControl", [org, {}]), "2024.09");
+  // 只读输入框不得尝试过滤（日历类控件的保护路径）
+  const readonlySelect = sdYmSelect(["2024"], ["2126"]);
+  readonlySelect.input.setAttribute("readonly", "");
+  const roField = NS.adapterRegistry.normalizeField({
+    provider: "moka", label: "目标年份", rawLabel: "目标年份", section: "教育背景", kind: "select", mokaKind: "select",
+    container: readonlySelect.dropdown, controls: [readonlySelect.input],
+    selectComponents: [readonlySelect.component], selectControls: [readonlySelect.input], textControls: [],
+    repeater: { itemIndex: 0, itemElement: null },
+  }, { providerKey: "moka", mergedRules: merged });
+  assert.equal(await NS.adapterRegistry.invoke("moka", "writeControl", [roField, "2024", { merged, kind: "select" }]), false,
+    "只读输入框的控件过滤不到目标时应失败而不是乱写");
+}
+
 async function testCaptureAndClear(ctx, fixture) {
   const NS = ctx.window.__WSZ;
   const merged = NS.mergedRules(seed, "moka");
@@ -577,6 +647,7 @@ async function main() {
   testRepeaterIdentity(ctx, fixture);
   await testSelectWriteUniqueAndDuplicate(ctx, fixture);
   await testDateRangeAndForever(ctx, fixture);
+  await testVirtualYearListFilter(ctx, fixture);
   await testCaptureAndClear(ctx, fixture);
   await testManualOnlyAndAddItem(ctx, fixture);
   console.log("PASS Moka real-form adapter tests");

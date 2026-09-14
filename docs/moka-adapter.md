@@ -28,9 +28,9 @@
 | --- | --- | --- | --- |
 | 单行文本 | `string_info` | ✔（Core） | |
 | 多行文本 | `text_info` | ✔（Core） | |
-| 自绘下拉 / search-select | `Select-` / `select_info` | ✔ | 选项就地渲染在本控件容器内（`option-label-*`）；唯一精确候选才点击；0/多候选跳过；失败可输入过滤重试一次；写后 Core 双回读 |
-| 单点年月 | `date_info`（2 下拉） | ✔ | 拆 `YYYY.MM` 为年/月两次下拉选择 |
-| 起止年月 | `date_info`（4 下拉 + 至今） | ✔ | start/end 各两次选择；`至今` 走 checkbox |
+| 自绘下拉 / search-select | `Select-` / `select_info` | ✔ | 选项就地渲染在本控件容器内（`option-label-*` 或 `span[data-key="sugar.select.label"]`）；唯一精确候选才点击；0/多候选跳过；失败可输入过滤重试一次；写后 Core 双回读 |
+| 单点年月 | `date_info`（2 下拉） | ✔ | 拆 `YYYY.MM` 为年/月两次下拉选择；年月选项为 `span[data-key="sugar.select.label"]`，年份列表可能是虚拟/倒序渲染，直接点选失败时自动改走「输入过滤后点选」（只读输入框除外） |
+| 起止年月 | `date_info`（4 下拉 + 至今） | ✔ | start/end 各两次选择，同样享有输入过滤兜底；`至今` 走 checkbox |
 | 勾选框 | 普通 checkbox | ✔（Core） | |
 
 ## unsupported / manual-only（只读或完全不动）
@@ -61,5 +61,17 @@
 
 `node tests/moka-adapter.test.js`：section / repeater itemIndex / DOM 乱序不串项 /
 Generic fallback / search-select 唯一候选 / 多候选拒绝 / date / range / 至今 /
-capture / clear / manual-only / addItem 关闭。fixture 为 FakeElement 构造，无个人数据；
-真实页面结构证据见 `tests/fixtures/moka/README.md`。
+年份虚拟列表输入过滤 / 只读输入框放弃过滤 / capture / clear / manual-only / addItem 关闭。
+fixture 为 FakeElement 构造，无个人数据；真实页面结构证据见 `tests/fixtures/moka/README.md`。
+
+## 真实页面验证记录
+
+- 2026-09-14，博世校招 Moka 表单（`app.mokahr.com/campus-recruitment/bosch/...#/candidateHome/resume`）：
+  扫描识别 38 个字段（教育背景/工作经历/实习经历/项目经验等 repeater 均正确），
+  对「教育背景 · 就读时间」执行 `writeControl {start:"2024.09", end:"2027.07"}` 返回 true，
+  回读 `{start:"2024.09", end:"2027.07"}`，并截图确认页面显示一致。
+- 该页面年份列表实际为全量渲染（2126–1926 共 201 项，倒序），直接点选即可命中；
+  输入过滤路径作为其他 Moka 表单虚拟列表的兜底保留。
+- 排障经验：后台/被冻结标签页中 `setTimeout` 会被浏览器节流甚至完全暂停，
+  依赖 `sleep` 的写入链会表现得像"卡死"。真实使用场景是用户在当前标签页主动点击插件，
+  标签页处于前台，不受影响；做 WebBridge 远程验证时需把 `NS.sleep` 换成微任务让权。

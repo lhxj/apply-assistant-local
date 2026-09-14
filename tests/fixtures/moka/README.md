@@ -38,8 +38,14 @@ sd-Select-menu-* > sd-Select-scrollable-* > sd-Select-common-item-*
 > sd-Menu-container-* > sd-Menu-content-* > span.option-label-*
 ```
 
-写入策略：点开 → 只在该控件容器内找 `[class*="option-label-"]` → 唯一精确候选才点击；
-0/多候选放弃；失败可输入过滤后重试一次；点击后由 Core 双回读验证。
+**年月下拉（`month-range-select` 内）的选项结构不同**：选项是
+`span[data-key="sugar.select.label"]`（没有 `option-label-*` 类）。
+年份列表倒序渲染（2126 → 1926）；有的表单全量渲染（201 项直接在 DOM），
+有的表单是虚拟列表，必须先向输入框键入文本过滤、目标年份才会出现在 DOM。
+
+写入策略：点开 → 只在该控件容器内找 `[class*="option-label-"], [data-key="sugar.select.label"]`
+→ 唯一精确候选才点击；0/多候选放弃；失败且输入框非只读时，输入目标文本过滤后重试点选；
+点击后由 Core 双回读验证。
 
 ## 安全边界（真实页面确认存在）
 

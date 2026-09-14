@@ -27,7 +27,8 @@
   const FIELDS_WRAPPER_SEL = '[class*="apply-fields-"]';
   const SELECT_COMPONENT_SEL = '[class*="sd-Select-container"]';
   const DROPDOWN_SEL = '[class*="sd-Dropdown-container"]';
-  const OPTION_SEL = '[class*="option-label-"]';
+  // 普通下拉选项：option-label-*；年月下拉选项：span[data-key="sugar.select.label"]
+  const OPTION_SEL = '[class*="option-label-"], [data-key="sugar.select.label"]';
   const DISPLAY_VALUE_SEL = '[class*="display-value"]';
 
   const SECTION_DEFS = [
@@ -492,39 +493,48 @@
     return true;
   }
 
-  async function writeSelect(field, value, context) {
-    const component = field.selectComponents && field.selectComponents[0];
+  // 输入过滤后重试（不提交输入，只缩小候选——年月虚拟列表必须走这条路）
+  async function filterAndPick(component, scope, want, context) {
+    const input = first(component, "input");
+    if (!input) return false;
+    if (input.readOnly) return false;
+    try {
+      if (input.getAttribute && input.getAttribute("readonly") != null) return false;
+    } catch (e) { /* getAttribute 不可用时按可输入处理 */ }
+    try {
+      input.focus && input.focus();
+      input.value = String(want);
+      if (NS.emitInputEvents) NS.emitInputEvents(input);
+      if (NS.sleep) await NS.sleep(250);
+      return await pickOption(scope, want, context);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 单个下拉组件的完整写入：打开 -> 直接点选 -> 输入过滤点选 -> 失败收起
+  async function writeSelectComponent(component, wantText, context) {
     if (!component) return false;
-    const want = NS.toOptionText ? NS.toOptionText((context && context.merged) || {}, value) : value;
+    const want = NS.toOptionText ? NS.toOptionText((context && context.merged) || {}, wantText) : wantText;
     if (!(await openSelect(component, context))) return false;
     const scope = closest(component, DROPDOWN_SEL) || component;
     let ok = await pickOption(scope, want, context);
-    if (!ok) {
-      // search-select：输入过滤后重试一次（输入不提交，只缩小候选）
-      const input = first(component, "input");
-      const readonly = input && (input.readOnly || input.getAttribute && input.getAttribute("readonly") !== null && input.getAttribute("readonly") !== undefined);
-      if (input && !readonly && typeof input.value === "string") {
-        try {
-          input.focus && input.focus();
-          input.value = String(want);
-          if (NS.emitInputEvents) NS.emitInputEvents(input);
-          if (NS.sleep) await NS.sleep(200);
-          ok = await pickOption(scope, want, context);
-        } catch (e) { ok = false; }
-      }
-    }
+    if (!ok) ok = await filterAndPick(component, scope, want, context);
     if (!ok) closePopup(context, scope);
     return ok;
+  }
+
+  async function writeSelect(field, value, context) {
+    const component = field.selectComponents && field.selectComponents[0];
+    return writeSelectComponent(component, value, context || {});
   }
 
   async function writeYearMonthPair(components, ym, context) {
     const p = NS.parseYearMonth ? NS.parseYearMonth(ym) : null;
     if (!p || components.length < 2) return false;
     for (const [i, v] of [[0, p.y], [1, p.m]]) {
-      if (!(await openSelect(components[i], context))) return false;
-      const scope = closest(components[i], DROPDOWN_SEL) || components[i];
-      const ok = await pickOption(scope, v, context);
-      if (!ok) { closePopup(context, scope); return false; }
+      const ok = await writeSelectComponent(components[i], v, context);
+      if (!ok) return false;
       if (NS.sleep) await NS.sleep(60);
     }
     return true;
