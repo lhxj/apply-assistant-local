@@ -6,9 +6,17 @@
 
   let rules, merged, provider, snapshot, settings;
 
+  function detectCurrentProvider(currentRules) {
+    if (typeof NS.detectProviderState === "function") {
+      const state = NS.detectProviderState(currentRules);
+      return Object.assign({}, state.provider, { formState: state.status });
+    }
+    return NS.detectProvider(currentRules);
+  }
+
   async function refresh() {
     rules = await NS.store.loadRules();
-    provider = NS.detectProvider(rules);
+    provider = detectCurrentProvider(rules);
     merged = NS.mergedRules(rules, provider.key);
     snapshot = await NS.store.loadSnapshot();
     settings = await NS.store.loadSettings();
@@ -130,7 +138,8 @@
   async function boot() {
     // 激活门槛：识别到服务商，或页面像网申表单
     const probeRules = await NS.store.loadRules();
-    provider = NS.detectProvider(probeRules);
+    provider = detectCurrentProvider(probeRules);
+    if (provider.key === "beisen" && provider.formState !== "BEISEN_FORM_CONFIRMED") return;
     if (!provider.key && !NS.looksLikeApplicationForm()) return;
     await refresh();
     NS.panel.mount(provider, { fill: doFill, capture: doCapture, rules: doRules, clear: doClear, openEditor });

@@ -1,0 +1,395 @@
+/* Real-form-informed Beisen Adapter tests. Run with: node tests/beisen-adapter.test.js */
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+
+const ROOT = path.resolve(__dirname, "..");
+const seed = JSON.parse(fs.readFileSync(path.join(ROOT, "extension/rules/seed.json"), "utf8"));
+
+class FakeElement {
+  constructor(tagName, options = {}) {
+    this.tagName = String(tagName || "div").toUpperCase();
+    this._className = options.className || "";
+    this.id = options.id || "";
+    this._text = options.text || "";
+    this.type = options.type || (this.tagName === "INPUT" ? "text" : "");
+    this.value = options.value == null ? "" : options.value;
+    this.checked = Boolean(options.checked);
+    this.files = options.files || [];
+    this.placeholder = options.placeholder || "";
+    this.style = Object.assign({}, options.style || {});
+    this.attributesMap = Object.assign({}, options.attributes || {});
+    this.children = [];
+    this.parentElement = null;
+    this.clicked = false;
+    this.onClick = null;
+    this.onEvent = null;
+  }
+
+  get className() { return this._className; }
+  set className(value) { this._className = String(value || ""); }
+  get textContent() { return this._text + this.children.map((child) => child.textContent).join(""); }
+  set textContent(value) { this._text = String(value || ""); this.children = []; }
+  get isConnected() { return true; }
+  get classList() {
+    return {
+      contains: (name) => this._className.split(/\s+/).includes(name),
+      add: (...names) => { this._className = Array.from(new Set(this._className.split(/\s+/).concat(names).filter(Boolean))).join(" "); },
+      remove: (...names) => { this._className = this._className.split(/\s+/).filter((name) => !names.includes(name)).join(" "); },
+    };
+  }
+
+  append(...children) {
+    for (const child of children.flat()) {
+      if (!child) continue;
+      child.parentElement = this;
+      this.children.push(child);
+    }
+    return this;
+  }
+
+  remove() {
+    if (!this.parentElement) return;
+    this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
+    this.parentElement = null;
+  }
+
+  contains(element) {
+    if (this === element) return true;
+    return this.children.some((child) => child.contains(element));
+  }
+
+  getAttribute(name) {
+    if (name === "class") return this.className;
+    if (name === "id") return this.id || null;
+    if (name === "type") return this.type || null;
+    if (name === "value") return this.value;
+    return Object.prototype.hasOwnProperty.call(this.attributesMap, name) ? this.attributesMap[name] : null;
+  }
+
+  setAttribute(name, value) {
+    if (name === "class") this.className = value;
+    else if (name === "id") this.id = value;
+    else this.attributesMap[name] = String(value);
+  }
+
+  getBoundingClientRect() {
+    return this.style.display === "none" || this.style.visibility === "hidden"
+      ? { width: 0, height: 0 }
+      : { width: 100, height: 20 };
+  }
+
+  dispatchEvent(event) {
+    if (this.onEvent) this.onEvent(event);
+    return true;
+  }
+
+  click() {
+    this.clicked = true;
+    if (this.onClick) this.onClick(this);
+  }
+
+  scrollIntoView() {}
+  focus() {}
+  blur() {}
+
+  matches(selector) {
+    return selector.split(",").some((part) => this.matchesCompound(part.trim()));
+  }
+
+  matchesCompound(selector) {
+    if (!selector) return false;
+    const parts = selector.split(/\s+/).filter(Boolean);
+    if (parts.length > 1) {
+      if (!this.matchesSimple(parts[parts.length - 1])) return false;
+      let parent = this.parentElement;
+      for (let i = parts.length - 2; i >= 0; i--) {
+        while (parent && !parent.matchesSimple(parts[i])) parent = parent.parentElement;
+        if (!parent) return false;
+        parent = parent.parentElement;
+      }
+      return true;
+    }
+    return this.matchesSimple(selector);
+  }
+
+  matchesSimple(selector) {
+    let current = selector.trim();
+    const nots = [];
+    current = current.replace(/:not\(([^)]+)\)/g, (_all, inner) => { nots.push(inner); return ""; });
+    if (nots.some((inner) => this.matchesSimple(inner))) return false;
+    const tag = current.match(/^([a-zA-Z][\w-]*|\*)/);
+    if (tag && tag[1] !== "*" && this.tagName !== tag[1].toUpperCase()) return false;
+    for (const cls of [...current.matchAll(/\.([\w-]+)/g)]) {
+      if (!this.classList.contains(cls[1])) return false;
+    }
+    for (const attr of [...current.matchAll(/\[([^\]=~*]+)(?:(\*|=)"?([^\]]*)"?)?\]/g)]) {
+      const name = attr[1].trim();
+      const actual = this.getAttribute(name);
+      if (actual == null) return false;
+      if (attr[2] === "=" && String(actual) !== attr[3].replace(/"$/, "")) return false;
+      if (attr[2] === "*" && !String(actual).includes(attr[3].replace(/"$/, ""))) return false;
+    }
+    return true;
+  }
+
+  querySelectorAll(selector) {
+    const out = [];
+    const visit = (node) => {
+      for (const child of node.children) {
+        if (child.matches(selector)) out.push(child);
+        visit(child);
+      }
+    };
+    visit(this);
+    return out;
+  }
+
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+
+  closest(selector) {
+    for (let current = this; current; current = current.parentElement) if (current.matches(selector)) return current;
+    return null;
+  }
+}
+
+class FakeDocument extends FakeElement {
+  constructor() {
+    super("document");
+    this.body = new FakeElement("body");
+    this.append(this.body);
+    this.activeElement = null;
+  }
+}
+
+function el(tag, options, ...children) {
+  const node = new FakeElement(tag, options);
+  return node.append(...children);
+}
+
+function formItem(label, control) {
+  return el("div", { className: "form-item form-item--phoenix" },
+    el("div", { className: "form-item__title form-item__title--right", text: `* ${label}` }, el("span", { className: "form-item__text", text: `* ${label}` })),
+    el("div", { className: "form-item__control" }, control));
+}
+
+function input(value = "") { return el("input", { className: "phoenix-input__input", type: "text", value }); }
+
+function select(doc, options = ["本科", "硕士研究生"]) {
+  const inputNode = el("input", { className: "phoenix-select__input", type: "text", value: "" });
+  const placeholder = el("div", { className: "phoenix-select__placeHolder", text: "请选择" });
+  const clear = el("div", { className: "phoenix-select__clearIcon" });
+  const component = el("div", { className: "phoenix-select phoenix-select--editable" }, inputNode, placeholder, clear);
+  component.onClick = () => {
+    const popup = el("div", { className: "common-unmodeled-layer" });
+    for (const value of options) {
+      const option = el("li", { className: "phoenix-selectList__listItem", text: value });
+      option.onClick = () => { placeholder._text = value; popup.remove(); };
+      popup.append(option);
+    }
+    doc.body.append(popup);
+  };
+  clear.onClick = () => { placeholder._text = "请选择"; };
+  return { component, input: inputNode, placeholder, clear };
+}
+
+function radioGroup(values) {
+  const items = values.map((value) => el("div", { className: "phoenix-radio-group__radioItem" },
+    el("div", { className: "phoenix-radio phoenix-radio--withLabel" }, el("span", { className: "phoenix-radio__radio-text", text: value }))));
+  items.forEach((item) => {
+    item.onClick = () => items.forEach((other) => {
+      const root = other.querySelector(".phoenix-radio");
+      root.classList.remove("phoenix-radio--checked");
+      if (other === item) root.classList.add("phoenix-radio--checked");
+    });
+  });
+  return items;
+}
+
+function group(doc, title, key, children) {
+  const shell = el("div", { className: "section-shell" }, el("div", { className: "section-title", text: title }));
+  const form = el("div", { className: "form", id: `fixture_Recruitment_extPerfect_${key}` });
+  form.append(...children);
+  shell.append(form);
+  doc.body.append(shell);
+  return form;
+}
+
+function buildFixture() {
+  const doc = new FakeDocument();
+  doc.body.append(el("div", { text: "Powered by Beisen" }));
+  const resumeFile = el("input", { type: "file", style: { display: "none" } });
+  doc.body.append(el("div", { className: "upload-resume" }, el("div", { text: "上传简历" }), resumeFile));
+  const personalSelect = select(doc);
+  const hometownSelect = select(doc, ["北京", "上海"]);
+  group(doc, "个人信息", "personal", [
+    formItem("姓名", input()),
+    formItem("性别", el("div", {}, ...radioGroup(["男", "女"]))),
+    formItem("证件照", el("div", { className: "file-uploader__wrapper" }, el("input", { type: "file", style: { display: "none" } }))),
+    formItem("籍贯", hometownSelect.component),
+    formItem("最高学历", personalSelect.component),
+  ]);
+  const schoolOne = input();
+  const startOne = select(doc, ["2024年09月", "2025年09月"]);
+  const educationOne = group(doc, "教育经历", "education_0", [formItem("学校名称", schoolOne), formItem("开始时间", startOne.component), el("input", { type: "checkbox" }), el("span", { text: "至今" })]);
+  const schoolTwo = input();
+  group(doc, "教育经历", "education_1", [formItem("学校名称", schoolTwo)]);
+  const declaration = el("input", { type: "checkbox" });
+  doc.body.append(el("div", { className: "statement" }, el("span", { text: "声明：以上所填均属本人实际情况" }), declaration));
+  const submit = el("button", { text: "预览并提交" });
+  doc.body.append(submit);
+  return { doc, resumeFile, personalSelect, hometownSelect, schoolOne, schoolTwo, startOne, educationOne, declaration, submit };
+}
+
+function loadScript(file, context) {
+  vm.runInNewContext(fs.readFileSync(path.join(ROOT, file), "utf8"), context, { filename: file });
+}
+
+function makeContext(fixture) {
+  const ctx = {
+    window: { __WSZ: {} },
+    document: fixture.doc,
+    location: { hostname: "flyaitalent.zhiye.com", pathname: "/form", hash: "", search: "" },
+    setTimeout,
+    clearTimeout,
+    Date,
+    getComputedStyle: (node) => ({ display: node.style.display || "", visibility: node.style.visibility || "" }),
+    Event: class { constructor(type, init) { this.type = type; Object.assign(this, init || {}); } },
+    MouseEvent: class { constructor(type, init) { this.type = type; Object.assign(this, init || {}); } },
+    KeyboardEvent: class { constructor(type, init) { this.type = type; Object.assign(this, init || {}); } },
+  };
+  vm.createContext(ctx);
+  loadScript("extension/lib/util.js", ctx);
+  loadScript("extension/lib/schema.js", ctx);
+  loadScript("extension/content/detect.js", ctx);
+  loadScript("extension/content/scanner.js", ctx);
+  loadScript("extension/content/adapters/generic.js", ctx);
+  loadScript("extension/content/adapters/moka.js", ctx);
+  loadScript("extension/content/adapters/beisen.js", ctx);
+  loadScript("extension/content/adapters/registry.js", ctx);
+  loadScript("extension/content/matcher.js", ctx);
+  loadScript("extension/content/writer.js", ctx);
+  loadScript("extension/content/learn.js", ctx);
+  ctx.window.__WSZ.sleep = async () => {};
+  ctx.window.__WSZ.emitInputEvents = () => {};
+  return ctx;
+}
+
+function testPlatformEvidenceAndBoundaries(ctx, fixture) {
+  const NS = ctx.window.__WSZ;
+  assert.equal(NS.detectProvider(seed).key, "beisen");
+  assert.equal(NS.detectProviderState(seed).status, "BEISEN_FORM_CONFIRMED");
+  ctx.location.pathname = "/job/detail";
+  assert.equal(NS.detectProviderState(seed).status, "BEISEN_SITE_NON_FORM");
+  ctx.location.pathname = "/form";
+  ctx.location.hostname = "fake-zhiye.com";
+  assert.equal(NS.detectProvider(seed).key, null);
+  ctx.location.hostname = "flyaitalent.zhiye.com";
+  assert.equal(NS.detectProviderState(seed).status, "BEISEN_FORM_CONFIRMED");
+  assert.equal(fixture.doc.querySelectorAll(".form-item").length, 8);
+}
+
+function testScanIdentityAndSafety(ctx, fixture) {
+  const NS = ctx.window.__WSZ;
+  const merged = NS.mergedRules(seed, "beisen");
+  const fields = NS.adapterRegistry.scanFields("beisen", { document: fixture.doc, location: ctx.location, mergedRules: merged, provider: { key: "beisen" } });
+  const schools = fields.filter((field) => field.label === "学校名称");
+  assert.equal(schools.length, 2);
+  assert.equal(JSON.stringify(schools.map((field) => field.repeater.itemIndex)), JSON.stringify([0, 1]));
+  assert.equal(JSON.stringify(schools.map((field) => field.identity)), JSON.stringify([
+    { sectionKey: "education", itemIndex: 0, fieldKey: "学校名称" },
+    { sectionKey: "education", itemIndex: 1, fieldKey: "学校名称" },
+  ]));
+  assert.equal(fields.filter((field) => field.label === "性别").length, 1);
+  assert.equal(fields.find((field) => field.label === "性别").kind, "radio");
+  assert.equal(fields.find((field) => field.label === "最高学历").kind, "select");
+  assert.equal(fields.find((field) => field.label === "开始时间").kind, "date");
+  assert.equal(fields.filter((field) => field.kind === "file").length, 2);
+  assert.equal(fields.filter((field) => field.label === "声明").length, 1);
+  assert.equal(fields.filter((field) => field.safetyRole === "submit").length, 1);
+  assert.equal(fields.some((field) => field.label === "预览并提交" && field.kind !== "unknown"), false);
+  assert.equal(fields.some((field) => field.label === "姓名" && field.container === field.controls[0]), false);
+  assert.equal(NS.resolvePath(fields.find((field) => field.label === "学校名称"), merged), "education[0].school");
+  assert.equal(NS.resolvePath(fields.find((field) => field.label === "开始时间"), merged), "education[0].start");
+  assert.equal(NS.resolvePath(fields.find((field) => field.label === "籍贯"), merged), null);
+  const plan = NS.buildPlan(fields.filter((field) => field.kind === "file" || field.safetyRole === "submit" || field.safetyRole === "declaration"), merged, NS.emptySnapshot());
+  assert.equal(plan.plan.length, 0);
+  assert.equal(plan.manual.length, 4);
+}
+
+async function testProviderReadWriteVerifyAndCapture(ctx, fixture) {
+  const NS = ctx.window.__WSZ;
+  const merged = NS.mergedRules(seed, "beisen");
+  const fields = NS.adapterRegistry.scanFields("beisen", { document: fixture.doc, location: ctx.location, mergedRules: merged });
+  const gender = fields.find((field) => field.label === "性别");
+  const initialGender = NS.adapterRegistry.invoke("beisen", "readControl", [gender, {}]);
+  assert.equal(initialGender, null);
+  assert.equal(gender.readStateUnknown, true);
+  const male = gender.radioControls[0].querySelector(".phoenix-radio");
+  male.classList.add("phoenix-radio--checked");
+  assert.equal(NS.adapterRegistry.invoke("beisen", "readControl", [gender, {}]), "男");
+  male.classList.remove("phoenix-radio--checked");
+  const writeGender = await NS.adapterRegistry.invoke("beisen", "writeControl", [gender, "女", { merged, kind: "radio" }]);
+  assert.equal(writeGender, true);
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "readControl", [gender, {}]), "女");
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "verifyControl", [gender, "女", { merged, kind: "radio", actual: "女" }]), true);
+
+  const highest = fields.find((field) => field.label === "最高学历");
+  const writeSelect = await NS.adapterRegistry.invoke("beisen", "writeControl", [highest, "本科", { merged, kind: "select" }]);
+  assert.equal(writeSelect, true);
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "readControl", [highest, {}]), "本科");
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "verifyControl", [highest, "本科", { merged, kind: "select", actual: "本科" }]), true);
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "clearControl", [highest, { kind: "select" }]), true);
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "readControl", [highest, {}]), "");
+
+  const name = fields.find((field) => field.label === "姓名");
+  name.textControls[0].value = "已有值";
+  const result = await NS.executePlan([{ field: name, kind: "text", path: "basicInfo.name", value: "不应覆盖" }], merged, { delayMs: 0, adapterRegistry: NS.adapterRegistry, providerKey: "beisen" });
+  assert.equal(result.skipped, 1);
+  assert.equal(name.textControls[0].value, "已有值");
+  const snapshot = NS.emptySnapshot();
+  const captured = await NS.captureSnapshot([name], merged, snapshot, { adapterRegistry: NS.adapterRegistry, providerKey: "beisen" });
+  assert.equal(captured.updated, 1);
+  assert.equal(snapshot.basicInfo.name, "已有值");
+
+  const duplicateSelect = select(fixture.doc, ["本科", "本科"]);
+  const duplicateField = NS.adapterRegistry.normalizeField({
+    provider: "beisen", label: "最高学历", rawLabel: "最高学历", section: "个人信息", kind: "select",
+    controls: [duplicateSelect.input], selectComponents: [duplicateSelect.component], selectControls: [duplicateSelect.input], textControls: [],
+  }, { providerKey: "beisen", mergedRules: merged });
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "writeControl", [duplicateField, "本科", { merged, kind: "select" }]), false);
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "clearControl", [{ kind: "unknown", controls: [] }, {}]), false);
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "clearControl", [{ kind: "file", manualOnly: true, controls: [] }, {}]), false);
+}
+
+async function testFallbackAndNonFormIsolation(ctx, fixture) {
+  const NS = ctx.window.__WSZ;
+  const original = NS.scanFields;
+  NS.scanFields = () => [{ label: "Generic字段", section: "个人信息", kind: "text", controls: [] }];
+  ctx.location.hostname = "example.com";
+  const fallback = NS.adapterRegistry.scanFields("beisen", { document: fixture.doc, location: ctx.location, mergedRules: NS.mergedRules(seed, "beisen") });
+  assert.equal(fallback[0].label, "Generic字段");
+  ctx.location.hostname = "flyaitalent.zhiye.com";
+  ctx.location.pathname = "/job/detail";
+  const nonForm = NS.adapterRegistry.scanFields("beisen", { document: fixture.doc, location: ctx.location, mergedRules: NS.mergedRules(seed, "beisen") });
+  assert.equal(nonForm.length, 0);
+  NS.scanFields = original;
+}
+
+async function main() {
+  const fixture = buildFixture();
+  const ctx = makeContext(fixture);
+  testPlatformEvidenceAndBoundaries(ctx, fixture);
+  ctx.location.hostname = "flyaitalent.zhiye.com";
+  ctx.location.pathname = "/form";
+  testScanIdentityAndSafety(ctx, fixture);
+  await testProviderReadWriteVerifyAndCapture(ctx, fixture);
+  await testFallbackAndNonFormIsolation(ctx, fixture);
+  console.log("PASS Beisen real-form adapter tests");
+}
+
+main().catch((err) => {
+  console.error(err.stack || err);
+  process.exitCode = 1;
+});
