@@ -47,6 +47,23 @@ sd-Select-menu-* > sd-Select-scrollable-* > sd-Select-common-item-*
 → 唯一精确候选才点击；0/多候选放弃；失败且输入框非只读时，输入目标文本过滤后重试点选；
 点击后由 Core 双回读验证。
 
+## 远程搜索下拉（学校/专业）
+
+`string_info` 语义但输入框在 `sd-Select-container` 内（`sd-Dropdown-container > label`），
+是"键入检索型"组合框：
+
+- 键入文本触发**服务端检索**（需要完整键序列：keydown → 原生赋值 → input/change → keyup），
+  候选行渲染在同一 `sd-Dropdown-container` 内，结构为嵌套两行
+  （外层 `sd-list-item-*` / `内层 sd-Menu-*-item-*`），列表底部固定有
+  「没有找到学校？添加学校全称」兜底行（不是候选，禁止点击）。
+- 写入：唯一精确匹配的**叶子行**才点击；提交后值进入 display-value，输入框被清空（过滤盒）。
+- 清除：hover 组件才渲染 `sd-Input-clear-*`（×），点击即清空（已实证）。
+
+## 基础信息（账号级只读）
+
+简历页「基础信息」区块（`basic-block-*` > `field-*`）的姓名/手机/邮箱输入框带 `disabled`，
+属于账号信息，页面本身禁止修改 → 分类 manual-only，不计入填写失败。
+
 ## 安全边界（真实页面确认存在）
 
 - `file_upload`（上传简历）、`confirm_info`（个人声明/更新说明）：manual-only

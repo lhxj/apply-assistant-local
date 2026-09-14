@@ -30,6 +30,10 @@
   // 普通下拉选项：option-label-*；年月下拉选项：span[data-key="sugar.select.label"]
   const OPTION_SEL = '[class*="option-label-"], [data-key="sugar.select.label"]';
   const DISPLAY_VALUE_SEL = '[class*="display-value"]';
+  // 远程搜索下拉（学校/专业等 string_info + sd-Select-container）的候选行；
+  // 真实结构为嵌套两行（外层 sd-list-item-* / 内层 sd-Menu-*-item-*），点叶子行
+  const SEARCH_OPTION_SEL = '[class*="-item-"]';
+  const SEARCH_FALLBACK_RE = /没有找到|添加学校|添加专业|添加全称|手动添加|手动输入/;
 
   const SECTION_DEFS = [
     { label: "申请信息", key: "_flat", repeatable: false },
@@ -91,6 +95,26 @@
 
   function contains(parent, child) {
     return Boolean(parent && child && typeof parent.contains === "function" && parent.contains(child));
+  }
+
+  function isDisabled(el) {
+    if (!el) return false;
+    if (el.disabled) return true;
+    try { return Boolean(el.getAttribute && el.getAttribute("disabled") != null); } catch (e) { return false; }
+  }
+
+  // 与 Core writer 一致的原生赋值（React 受控输入可感知）
+  function setNativeInputValue(el, value) {
+    try {
+      const proto = el.tagName === "TEXTAREA"
+        ? (typeof HTMLTextAreaElement !== "undefined" && HTMLTextAreaElement.prototype)
+        : (typeof HTMLInputElement !== "undefined" && HTMLInputElement.prototype);
+      const desc = proto && Object.getOwnPropertyDescriptor(proto, "value");
+      if (desc && desc.set) desc.set.call(el, value);
+      else el.value = value;
+    } catch (e) {
+      el.value = value;
+    }
   }
 
   function closest(element, selector) {
@@ -298,7 +322,11 @@
     const kind = kindOf(container, parts);
     const repeater = repeaterFor(container, def);
     const sectionKey = def && def.key !== "_flat" ? def.key : null;
-    const manualOnly = kind === "file" || kind === "cascader" || kind === "day";
+    // 远程搜索下拉：语义为 string_info，但输入框在 sd-Select-container 内（学校/专业等）
+    const searchCombo = kind === "text" && parts.selectComponents.length === 1 && parts.textControls.length === 0;
+    // 全部控件被页面禁用（基础信息 姓名/手机/邮箱为账号级只读）：不判为填写失败，转人工
+    const allDisabled = parts.controls.length > 0 && parts.controls.every(isDisabled);
+    const manualOnly = kind === "file" || kind === "cascader" || kind === "day" || allDisabled;
     return {
       provider: "moka",
       section: def ? def.label : rawSectionOf(container),
@@ -319,6 +347,7 @@
       selectControls: parts.selectControls,
       checkbox: parts.checkbox,
       fileControls: parts.fileControls,
+      searchCombo,
       manualOnly,
       safetyRole: kind === "file" ? "file" : null,
     };
@@ -417,7 +446,12 @@
     if (!field) return undefined;
     const kind = field.mokaKind || field.kind;
     if (kind === "text" || kind === "textarea") {
-      const input = field.textControls && field.textControls[0];
+      // 搜索下拉：已提交的值在 display-value 里，输入框只是过滤盒
+      if (field.searchCombo && field.selectComponents && field.selectComponents[0]) {
+        const shown = shownTextOfComponent(field.selectComponents[0]);
+        if (shown) return shown;
+      }
+      const input = (field.textControls && field.textControls[0]) || (field.selectControls && field.selectControls[0]);
       return input ? String(input.value || "").trim() : "";
     }
     if (kind === "select") return readSelect(field);
@@ -529,6 +563,53 @@
     return writeSelectComponent(component, value, context || {});
   }
 
+  // 远程搜索下拉（学校/专业）：键入 -> 服务端检索 -> 唯一精确叶子行才点击。
+  // 找不到候选时清掉已键入文本并诚实失败（不提交自由文本，避免脏数据）。
+  async function writeSearchCombo(field, value, context) {
+    const component = field.selectComponents && field.selectComponents[0];
+    const input = (field.controls && field.controls[0]) || (component && first(component, "input"));
+    if (!component || !input || isDisabled(input)) return false;
+    const want = String(value || "").trim();
+    if (!want) return false;
+    const scope = closest(component, DROPDOWN_SEL) || field.container || component;
+    const cleanup = () => {
+      try { setNativeInputValue(input, ""); if (NS.emitInputEvents) NS.emitInputEvents(input); } catch (e) { /* ignore */ }
+      closePopup(context, scope);
+    };
+    try {
+      input.scrollIntoView && input.scrollIntoView({ block: "center" });
+      input.focus && input.focus();
+      // Moka 检索对完整键序列敏感：补 keydown/keyup，不能只发 input
+      input.dispatchEvent && input.dispatchEvent(new KeyboardEvent("keydown", { key: "x", bubbles: true }));
+      dispatchClick(input);
+      setNativeInputValue(input, want);
+      if (NS.emitInputEvents) NS.emitInputEvents(input);
+      input.dispatchEvent && input.dispatchEvent(new KeyboardEvent("keyup", { key: "x", bubbles: true }));
+    } catch (e) {
+      cleanup();
+      return false;
+    }
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const rows = qsa(scope, SEARCH_OPTION_SEL).filter((el) => isVisible(el)
+        && normalize(textOf(el)) === normalize(want)
+        && !SEARCH_FALLBACK_RE.test(textOf(el)));
+      const leaves = rows.filter((r) => !rows.some((o) => o !== r && contains(r, o)));
+      if (leaves.length > 1) { cleanup(); return false; } // 同名多候选不猜
+      if (leaves.length === 1) {
+        if (!dispatchClick(leaves[0])) { cleanup(); return false; }
+        if (NS.sleep) await NS.sleep(120);
+        if (shownTextOfComponent(component) === normalize(want)) return true;
+        cleanup();
+        return false;
+      }
+      if (NS.sleep) await NS.sleep(120);
+      else await new Promise((r) => setTimeout(r, 120));
+    }
+    cleanup();
+    return false;
+  }
+
   async function writeYearMonthPair(components, ym, context) {
     const p = NS.parseYearMonth ? NS.parseYearMonth(ym) : null;
     if (!p || components.length < 2) return false;
@@ -581,7 +662,15 @@
   async function clearSelectComponent(component, context) {
     if (!component) return false;
     if (!shownTextOfComponent(component)) return true;
-    // Moka sd-Select 有值时会出现清除按钮（×）；找不到就诚实失败
+    // 真实页面确认：清除按钮（×）hover 才渲染（sd-Input-clear-*）
+    try {
+      if (component.dispatchEvent && typeof MouseEvent !== "undefined") {
+        component.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        component.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      }
+    } catch (e) { /* hover 只为唤起清除按钮 */ }
+    if (NS.sleep) await NS.sleep(100);
+    // Moka sd-Select 有值且 hover 时出现清除按钮（×）；找不到就诚实失败
     const target = qsa(component, '[class*="clear"], [class*="Clear"]').find(isVisible);
     if (!target || !dispatchClick(target)) return false;
     if (NS.sleep) await NS.sleep(80);
@@ -661,6 +750,7 @@
     async writeControl(field, value, context) {
       if (!field || field.manualOnly || field.safetyRole) return false;
       const kind = (context && context.kind) || field.mokaKind || field.kind;
+      if (kind === "text" && field.searchCombo) return writeSearchCombo(field, value, context || {});
       if (kind === "text" || kind === "textarea" || kind === "checkbox") {
         return Boolean(NS.writeControlCore && await NS.writeControlCore(field, value, Object.assign({}, context || {}, { kind })));
       }
@@ -678,6 +768,7 @@
     async clearControl(field, context) {
       if (!field || field.manualOnly || field.safetyRole) return false;
       const kind = (context && context.kind) || field.mokaKind || field.kind;
+      if (kind === "text" && field.searchCombo) return clearSelectComponent(field.selectComponents && field.selectComponents[0], context || {});
       if (kind === "text" || kind === "textarea" || kind === "checkbox") {
         return Boolean(NS.clearControlCore && await NS.clearControlCore(field, Object.assign({}, context || {}, { kind })));
       }

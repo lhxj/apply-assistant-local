@@ -333,6 +333,52 @@ function confirmField(label) {
     el("div", { className: `ctrl-${hash()}` }, el("label", {}, box, el("span", { text: "本人承诺以上信息属实" }))));
 }
 
+// 远程搜索下拉（学校/专业）：string_info 语义 + sd-Select-container 内的输入框；
+// 键入文本（input 事件）后模拟服务端检索渲染候选行（外层 list-item + 内层 menu-item 嵌套，同真实结构）；
+// 清除 × 仅 hover 时出现（sd-Input-clear-*）。
+function searchComboField(label, options) {
+  const display = el("span", { className: `sd-Input-display-value-${hash()}` }, el("span", { text: "" }));
+  const input = el("input", { className: `sd-Input-input-${hash()}`, type: "text", placeholder: label });
+  const clear = el("span", { className: `sd-Input-clear-${hash()}`, style: { display: "none" } });
+  const component = el("label", { className: `sd-Input-container-${hash()} sd-Select-container-${hash()}` }, display, input, clear);
+  const dropdown = el("div", { className: `sd-Dropdown-container-${hash()}` }, component);
+  let menu = null;
+  const closeMenu = () => { if (menu) { menu.remove(); menu = null; } };
+  input.onEvent = (event) => {
+    if (event.type !== "input") return;
+    closeMenu();
+    const q = String(input.value || "").trim();
+    if (!q) return;
+    menu = el("div", { className: `sd-Select-menu-${hash()}` });
+    for (const opt of options.filter((o) => o.includes(q))) {
+      const inner = el("div", { className: `sd-Menu-common-item-${hash()}`, text: opt });
+      inner.onClick = () => { display.children[0]._text = opt; input.value = ""; closeMenu(); };
+      menu.append(el("div", { className: `sd-list-item-${hash()}` }, inner));
+    }
+    menu.append(el("div", { className: `sd-footer-item-${hash()}`, text: "没有找到学校？添加学校全称" }));
+    dropdown.append(menu);
+  };
+  component.onEvent = (event) => {
+    if (event.type === "mouseover" || event.type === "mouseenter") clear.style.display = "";
+  };
+  clear.onClick = () => { display.children[0]._text = ""; };
+  return { field: el("div", { className: `apply-field-${hash()} string_info-${hash()} apply-filed-padding-${hash()}` },
+    titleEl(label), el("div", { className: `ctrl-${hash()}` }, dropdown)),
+    combo: { dropdown, component, display, input, clear } };
+}
+
+// 基础信息（账号级只读）：basic-block + field-* 容器 + disabled 输入框
+function disabledBasicField(label) {
+  return el("div", { className: `field-${hash()}` },
+    el("div", { className: `filed-title-${hash()}` }, el("span", { text: label })),
+    el("input", { className: `sd-Input-input-${hash()}`, type: "text", placeholder: label, attributes: { disabled: "" } }));
+}
+
+function basicBlock(title, ...fields) {
+  return el("div", { className: `basic-block-${hash()}` },
+    el("div", { className: `blockTitle-${hash()}` }, el("span", { text: title })), ...fields);
+}
+
 function applyBlock(title, repeatable, ...wrappers) {
   const titleNode = el("div", { className: `blockTitle-${hash()}` },
     el("span", { text: title }),
@@ -375,6 +421,13 @@ function buildFixture() {
   const declaration = confirmField("个人声明");
   doc.body.append(applyBlock("声明", false, itemWrapper(declaration)));
 
+  // 远程搜索下拉（其他信息区块，避免影响教育背景 repeater 计数）
+  const combo = searchComboField("意向学校", ["华中科技大学", "华中科技大学网络教育学院", "复旦大学", "复旦大学"]);
+  doc.body.append(applyBlock("其他信息", false, itemWrapper(combo.field)));
+
+  // 基础信息（账号级禁用）
+  doc.body.append(basicBlock("基础信息", disabledBasicField("邮箱")));
+
   const submit = el("button", { text: "保存" });
   doc.body.append(submit);
   const sync = el("span", { text: "同步更新在线简历" });
@@ -382,7 +435,7 @@ function buildFixture() {
 
   return {
     doc, gender, degree, orgTime, eduRange1, eduRange2, edu1, edu2, eduBlock,
-    internRange, internDuty, declaration, submit, sync,
+    internRange, internDuty, declaration, submit, sync, combo,
   };
 }
 
@@ -620,11 +673,49 @@ async function testCaptureAndClear(ctx, fixture) {
   assert.equal(await NS.adapterRegistry.invoke("moka", "clearControl", [fields.find((f) => f.label === "个人声明"), {}]), false);
 }
 
+async function testSearchComboWriteReadClear(ctx, fixture) {
+  const NS = ctx.window.__WSZ;
+  const merged = NS.mergedRules(seed, "moka");
+  const fields = scan(ctx, fixture);
+  const combo = fields.find((f) => f.label === "意向学校");
+  // 分类：string_info + sd-Select-container => text + searchCombo
+  assert.equal(combo.kind, "text");
+  assert.equal(combo.searchCombo, true);
+  assert.equal(combo.manualOnly, false);
+  // 唯一精确候选（嵌套行取叶子）：写入成功 + 回读 display-value + 验证
+  assert.equal(await NS.adapterRegistry.invoke("moka", "writeControl", [combo, "华中科技大学", { merged, kind: "text" }]), true);
+  assert.equal(await NS.adapterRegistry.invoke("moka", "readControl", [combo, {}]), "华中科技大学");
+  assert.equal(await NS.adapterRegistry.invoke("moka", "verifyControl", [combo, "华中科技大学", { merged, kind: "text" }]), true);
+  // 无候选：失败且清掉已键入文本，不残留
+  assert.equal(await NS.adapterRegistry.invoke("moka", "writeControl", [combo, "不存在的大学XYZ", { merged, kind: "text" }]), false);
+  assert.equal(fixture.combo.combo.input.value, "", "失败时必须清空键入文本");
+  assert.equal(await NS.adapterRegistry.invoke("moka", "readControl", [combo, {}]), "华中科技大学");
+  // 同名多候选：拒绝
+  assert.equal(await NS.adapterRegistry.invoke("moka", "writeControl", [combo, "复旦大学", { merged, kind: "text" }]), false);
+  assert.equal(await NS.adapterRegistry.invoke("moka", "readControl", [combo, {}]), "华中科技大学");
+  // 清空：hover 唤起 × 后点击
+  assert.equal(await NS.adapterRegistry.invoke("moka", "clearControl", [combo, { kind: "text" }]), true);
+  assert.equal(await NS.adapterRegistry.invoke("moka", "readControl", [combo, {}]), "");
+}
+
+function testDisabledFieldsManualOnly(ctx, fixture) {
+  const NS = ctx.window.__WSZ;
+  const merged = NS.mergedRules(seed, "moka");
+  const fields = scan(ctx, fixture);
+  const email = fields.find((f) => f.label === "邮箱");
+  assert.equal(email.section, "基础信息");
+  assert.equal(email.kind, "text");
+  assert.equal(email.manualOnly, true, "禁用控件必须转人工而不是判填写失败");
+  // manual-only 不进入填写计划
+  const plan = NS.buildPlan([email], merged, NS.emptySnapshot());
+  assert.equal(plan.plan.length, 0);
+}
+
 async function testManualOnlyAndAddItem(ctx, fixture) {
   const NS = ctx.window.__WSZ;
   const fields = scan(ctx, fixture);
   // manual-only / safetyRole 一律拒绝写入
-  for (const label of ["上传简历", "个人声明", "出生日期", "籍贯", "应聘岗位"]) {
+  for (const label of ["上传简历", "个人声明", "出生日期", "籍贯", "应聘岗位", "邮箱"]) {
     const field = fields.find((f) => f.label === label);
     assert.equal(await NS.adapterRegistry.invoke("moka", "writeControl", [field, "任意值", { kind: field.kind }]), false, `${label} 不得写入`);
   }
@@ -649,6 +740,8 @@ async function main() {
   await testDateRangeAndForever(ctx, fixture);
   await testVirtualYearListFilter(ctx, fixture);
   await testCaptureAndClear(ctx, fixture);
+  await testSearchComboWriteReadClear(ctx, fixture);
+  testDisabledFieldsManualOnly(ctx, fixture);
   await testManualOnlyAndAddItem(ctx, fixture);
   console.log("PASS Moka real-form adapter tests");
 }
