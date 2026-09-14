@@ -407,12 +407,26 @@
     };
   }
 
+  function dateParts(value) {
+    if (NS.parseYearMonth) return NS.parseYearMonth(value);
+    const match = String(value || "").trim().match(/^(\d{4})\s*[.\-/年]\s*(\d{1,2})(?:\s*[.\-/月]\s*(\d{1,2}))?/);
+    if (!match) return null;
+    return { y: match[1], m: String(Number(match[2])), d: match[3] ? String(Number(match[3])) : null };
+  }
+
   function normalizeDate(value) {
-    if (NS.parseYearMonth) {
-      const parsed = NS.parseYearMonth(value);
-      if (parsed) return `${parsed.y}.${String(parsed.m).padStart(2, "0")}`;
-    }
-    return normalize(value);
+    if (NS.normalizeDate) return NS.normalizeDate(value);
+    const parsed = dateParts(value);
+    if (!parsed) return normalize(value);
+    const base = `${parsed.y}.${String(parsed.m).padStart(2, "0")}`;
+    return parsed.d == null ? base : `${base}.${String(parsed.d).padStart(2, "0")}`;
+  }
+
+  function dateMatches(actual, expected) {
+    const a = dateParts(actual);
+    const e = dateParts(expected);
+    if (!a || !e || a.y !== e.y || String(Number(a.m)) !== String(Number(e.m))) return false;
+    return e.d == null || (a.d != null && String(Number(a.d)) === String(Number(e.d)));
   }
 
   function selectShownText(field) {
@@ -427,6 +441,153 @@
     const input = field.selectControls && field.selectControls[0];
     const value = normalize(input && input.value);
     return /^(请选择|选择|请填写)$/.test(value) ? "" : value;
+  }
+
+  function componentFor(field) {
+    return field && field.selectComponents && field.selectComponents[0]
+      ? field.selectComponents[0]
+      : (field && field.selectControls && field.selectControls[0] ? closest(field.selectControls[0], SELECT_SELECTOR) : null);
+  }
+
+  function visibleElements(root, selector) {
+    return qsa(root, selector).filter(isVisible);
+  }
+
+  function activeComponent(doc, component) {
+    if (!doc || !component) return false;
+    const active = visibleElements(doc, `${SELECT_SELECTOR}.phoenix-select--active`);
+    return active.length === 1 && active[0] === component;
+  }
+
+  async function waitForValue(read, attempts) {
+    const count = Number.isInteger(attempts) ? attempts : 40;
+    for (let i = 0; i < count; i += 1) {
+      const value = read();
+      if (value) return value;
+      if (NS.sleep) await NS.sleep(60);
+    }
+    return null;
+  }
+
+  async function openSelectPopup(field, context) {
+    const doc = docOf(context);
+    const component = componentFor(field);
+    if (!doc || !component || !dispatchClick(component)) return null;
+    return waitForValue(() => {
+      if (!activeComponent(doc, component)) return null;
+      const popups = visibleElements(doc, ".phoenix-selectList");
+      return popups.length === 1 ? popups[0] : null;
+    });
+  }
+
+  async function openDatePopup(field, context) {
+    const doc = docOf(context);
+    const component = componentFor(field);
+    if (!doc || !component || !dispatchClick(component)) return null;
+    return waitForValue(() => {
+      if (!activeComponent(doc, component)) return null;
+      const popups = visibleElements(doc, ".phoenix-date-picker__wrap");
+      return popups.length === 1 ? popups[0] : null;
+    });
+  }
+
+  function popupMode(popup) {
+    if (!popup) return null;
+    if (visibleElements(popup, ".phoenix-calendar-month-panel").length === 1) return "month";
+    if (visibleElements(popup, ".phoenix-calendar-table").length === 1) return "day";
+    return null;
+  }
+
+  function yearText(value) {
+    const match = String(value || "").match(/\b(\d{4})\b/);
+    return match ? match[1] : null;
+  }
+
+  function monthNumber(value) {
+    const match = String(value || "").trim().match(/^(\d{1,2})\s*月?$/);
+    return match ? String(Number(match[1])) : null;
+  }
+
+  function dayNumber(value) {
+    const match = String(value || "").trim().match(/^(\d{1,2})$/);
+    return match ? String(Number(match[1])) : null;
+  }
+
+  async function chooseDateYear(popup, year, mode) {
+    const buttonSelector = mode === "month"
+      ? ".phoenix-calendar-month-panel-year-select"
+      : ".phoenix-calendar-year-select";
+    const buttons = visibleElements(popup, buttonSelector);
+    if (buttons.length !== 1) return false;
+    if (yearText(textOf(buttons[0])) === year) return true;
+    if (!dispatchClick(buttons[0])) return false;
+    const yearPanel = await waitForValue(() => {
+      const panels = visibleElements(popup, ".phoenix-calendar-year-panel");
+      return panels.length === 1 ? panels[0] : null;
+    });
+    if (!yearPanel) return false;
+    const matches = visibleElements(yearPanel, ".phoenix-calendar-year-panel-cell").filter((cell) => yearText(textOf(cell)) === year);
+    if (matches.length !== 1 || !dispatchClick(matches[0])) return false;
+    return Boolean(await waitForValue(() => {
+      const panels = visibleElements(popup, ".phoenix-calendar-year-panel");
+      return panels.length === 0 ? true : null;
+    }));
+  }
+
+  async function chooseDateMonth(popup, month) {
+    if (visibleElements(popup, ".phoenix-calendar-month-panel").length === 0) {
+      const buttons = visibleElements(popup, ".phoenix-calendar-month-select");
+      if (buttons.length !== 1 || !dispatchClick(buttons[0])) return false;
+      if (!await waitForValue(() => visibleElements(popup, ".phoenix-calendar-month-panel").length === 1 ? true : null)) return false;
+    }
+    const matches = visibleElements(popup, ".phoenix-calendar-month-panel-cell").filter((cell) => monthNumber(textOf(cell)) === month);
+    if (matches.length !== 1) return false;
+    return dispatchClick(matches[0]);
+  }
+
+  function chooseDateDay(popup, day) {
+    const matches = visibleElements(popup, ".phoenix-calendar-table td.phoenix-calendar-cell").filter((cell) => {
+      const cls = classText(cell);
+      if (/last-month|next-month/.test(cls)) return false;
+      return dayNumber(textOf(cell)) === day;
+    });
+    if (matches.length !== 1) return false;
+    return dispatchClick(matches[0]);
+  }
+
+  function readDate(field) {
+    const value = selectShownText(field);
+    return value ? normalizeDate(value) : "";
+  }
+
+  async function writeDate(field, value, context) {
+    const expected = dateParts(value);
+    if (!expected || !expected.y || !expected.m) return false;
+    const popup = await openDatePopup(field, context || {});
+    const mode = popupMode(popup);
+    if (!popup || !mode) return false;
+    if ((mode === "month" && expected.d != null) || (mode === "day" && expected.d == null)) return false;
+    if (!await chooseDateYear(popup, expected.y, mode)) {
+      closePopup(docOf(context));
+      return false;
+    }
+    if (!await chooseDateMonth(popup, expected.m)) {
+      closePopup(docOf(context));
+      return false;
+    }
+    if (mode === "day" && !chooseDateDay(popup, expected.d)) return false;
+    const verified = await waitForValue(() => dateMatches(readDate(field), value) ? true : null, 20);
+    return Boolean(verified);
+  }
+
+  async function clearDate(field, context) {
+    const current = readDate(field);
+    if (!current) return true;
+    const component = componentFor(field);
+    const clear = component && first(component, ".phoenix-select__clearIcon");
+    if (!clear || !isVisible(clear) || !dispatchClick(clear)) return false;
+    const cleared = await waitForValue(() => !readDate(field) ? true : null, 20);
+    return Boolean(cleared);
   }
 
   function radioOptionText(element) {
@@ -469,10 +630,7 @@
       return input ? String(input.value || "").trim() : "";
     }
     if (field.kind === "select") return selectShownText(field);
-    if (field.kind === "date") {
-      const value = selectShownText(field);
-      return value ? normalizeDate(value) : "";
-    }
+    if (field.kind === "date") return readDate(field);
     if (field.kind === "radio") return readRadio(field);
     if (field.kind === "checkbox") return Boolean(field.checkbox && field.checkbox.checked);
     if (field.kind === "file") return Boolean((field.fileControls || []).some((input) => input.files && input.files.length));
@@ -499,16 +657,14 @@
 
   async function pickFromPopup(field, value, context) {
     const doc = docOf(context);
-    const component = field.selectComponents && field.selectComponents[0]
-      ? field.selectComponents[0]
-      : (field.selectControls && field.selectControls[0] ? closest(field.selectControls[0], SELECT_SELECTOR) : null);
-    if (!component || !dispatchClick(component)) return false;
-    const want = field.kind === "date" ? normalizeDate(value) : normalize(NS.toOptionText ? NS.toOptionText(context && context.merged || {}, value) : value);
+    const popup = await openSelectPopup(field, context || {});
+    if (!doc || !popup) return false;
+    const want = normalize(NS.toOptionText ? NS.toOptionText(context && context.merged || {}, value) : value);
     const deadline = Date.now() + 2500;
     while (Date.now() < deadline) {
-      const options = qsa(doc, ".phoenix-selectList__listItem").filter(isVisible);
+      const options = qsa(popup, ".phoenix-selectList__listItem").filter(isVisible);
       const matches = options.filter((option) => {
-        const optionText = field.kind === "date" ? normalizeDate(textOf(option)) : normalize(textOf(option));
+        const optionText = normalize(textOf(option));
         return optionText === want;
       });
       if (matches.length === 1) return dispatchClick(matches[0]);
@@ -532,7 +688,7 @@
     const kind = (context && context.kind) || field.kind;
     if (kind === "text" || kind === "textarea") return String(actual).trim() === String(value).trim();
     if (kind === "select" || kind === "radio") return normalize(actual) === normalize(NS.toOptionText ? NS.toOptionText(context && context.merged || {}, value) : value);
-    if (kind === "date") return normalizeDate(actual) === normalizeDate(value);
+    if (kind === "date") return dateMatches(actual, value);
     if (kind === "checkbox") return Boolean(actual) === Boolean(value);
     return false;
   }
@@ -613,6 +769,10 @@
       return readControl(field);
     },
 
+    readDate(field) {
+      return readDate(field);
+    },
+
     captureControl(field) {
       return readControl(field);
     },
@@ -623,7 +783,8 @@
       if (kind === "text" || kind === "textarea" || kind === "checkbox") {
         return Boolean(NS.writeControlCore && await NS.writeControlCore(field, value, Object.assign({}, context || {}, { kind })));
       }
-      if (kind === "select" || kind === "date") return pickFromPopup(field, value, context || {});
+      if (kind === "select") return pickFromPopup(field, value, context || {});
+      if (kind === "date") return writeDate(field, value, context || {});
       if (kind === "radio") return writeRadio(field, value, context || {});
       return false;
     },
@@ -632,14 +793,23 @@
       return verifyControl(field, value, context || {});
     },
 
+    verifyDate(field, value, context) {
+      return verifyControl(field, value, Object.assign({}, context || {}, { kind: "date" }));
+    },
+
     async clearControl(field, context) {
       if (!field || field.manualOnly || field.safetyRole) return false;
       const kind = (context && context.kind) || field.kind;
       if (kind === "text" || kind === "textarea" || kind === "checkbox") {
         return Boolean(NS.clearControlCore && await NS.clearControlCore(field, Object.assign({}, context || {}, { kind })));
       }
-      if (kind === "select" || kind === "date") return clearSelect(field, context || {});
+      if (kind === "select") return clearSelect(field, context || {});
+      if (kind === "date") return clearDate(field, context || {});
       return false;
+    },
+
+    clearDate(field, context) {
+      return clearDate(field, context || {});
     },
 
     // Add buttons are visible in the real sample, but auto-add is deliberately

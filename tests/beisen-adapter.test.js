@@ -182,16 +182,98 @@ function select(doc, options = ["本科", "硕士研究生"]) {
   const clear = el("div", { className: "phoenix-select__clearIcon" });
   const component = el("div", { className: "phoenix-select phoenix-select--editable" }, inputNode, placeholder, clear);
   component.onClick = () => {
-    const popup = el("div", { className: "common-unmodeled-layer" });
+    component.classList.add("phoenix-select--active");
+    const popup = el("div", { className: "common-unmodeled-layer phoenix-selectList" });
     for (const value of options) {
       const option = el("li", { className: "phoenix-selectList__listItem", text: value });
-      option.onClick = () => { placeholder._text = value; popup.remove(); };
+      option.onClick = () => { placeholder._text = value; component.classList.remove("phoenix-select--active"); popup.remove(); };
       popup.append(option);
     }
     doc.body.append(popup);
   };
   clear.onClick = () => { placeholder._text = "请选择"; };
   return { component, input: inputNode, placeholder, clear };
+}
+
+function dateSelect(doc, mode = "month", options = {}) {
+  const inputNode = el("input", { className: "phoenix-select__input", type: "text", value: "" });
+  const placeholder = el("div", { className: "phoenix-select__placeHolder", text: "请选择" });
+  const clear = el("div", { className: "phoenix-select__clearIcon" });
+  const component = el("div", { className: "phoenix-select phoenix-select--editable" }, inputNode, placeholder, clear);
+  let popup = null;
+  let year = String(options.initialYear || "2026");
+  let month = String(options.initialMonth || "9");
+  const years = (options.years || ["2000", "2001", "2002", "2003", "2004", "2005", "2024", "2025", "2026", "2027"]).map(String);
+  const months = (options.months || ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]).map(String);
+  const days = (options.days || Array.from({ length: 31 }, (_v, index) => String(index + 1))).map(String);
+
+  function clearPopupChildren() {
+    if (popup) popup.children = [];
+  }
+
+  function buildYearPanel(next) {
+    clearPopupChildren();
+    const panel = el("div", { className: "phoenix-calendar-year-panel" });
+    for (const value of years) {
+      const cell = el("td", { className: "phoenix-calendar-year-panel-cell", text: value });
+      cell.onClick = () => { year = value; next(); };
+      panel.append(cell);
+    }
+    popup.append(panel);
+  }
+
+  function buildMonthPanel() {
+    clearPopupChildren();
+    const panel = el("div", { className: "phoenix-calendar-month-panel" });
+    const yearButton = el("a", { className: "phoenix-calendar-month-panel-year-select", text: year });
+    yearButton.onClick = () => buildYearPanel(buildMonthPanel);
+    panel.append(yearButton);
+    for (const value of months) {
+      const cell = el("td", { className: "phoenix-calendar-month-panel-cell" }, el("a", { className: "phoenix-calendar-month-panel-month", text: `${Number(value)}月` }));
+      cell.onClick = () => {
+        month = value;
+        if (mode === "day") {
+          buildDayPanel();
+        } else {
+          placeholder._text = `${year}年${String(Number(month)).padStart(2, "0")}月`;
+          component.classList.remove("phoenix-select--active");
+          popup.remove();
+        }
+      };
+      panel.append(cell);
+    }
+    popup.append(panel);
+  }
+
+  function buildDayPanel() {
+    clearPopupChildren();
+    const calendar = el("div", { className: "phoenix-calendar-table" });
+    const yearButton = el("a", { className: "phoenix-calendar-year-select", text: `${year}年` });
+    yearButton.onClick = () => buildYearPanel(buildDayPanel);
+    const monthButton = el("a", { className: "phoenix-calendar-month-select", text: `${Number(month)}月` });
+    monthButton.onClick = buildMonthPanel;
+    calendar.append(yearButton, monthButton);
+    for (const value of days) {
+      const cell = el("td", { className: "phoenix-calendar-cell", text: value });
+      cell.onClick = () => {
+        placeholder._text = `${year}年${String(Number(month)).padStart(2, "0")}月${String(Number(value)).padStart(2, "0")}日`;
+        component.classList.remove("phoenix-select--active");
+        popup.remove();
+      };
+      calendar.append(cell);
+    }
+    popup.append(calendar);
+  }
+
+  component.onClick = () => {
+    component.classList.add("phoenix-select--active");
+    popup = el("div", { className: "phoenix-date-picker__wrap" });
+    doc.body.append(popup);
+    if (mode === "day") buildDayPanel();
+    else buildMonthPanel();
+  };
+  clear.onClick = () => { placeholder._text = "请选择"; };
+  return { component, input: inputNode, placeholder, clear, mode };
 }
 
 function radioGroup(values) {
@@ -223,15 +305,17 @@ function buildFixture() {
   doc.body.append(el("div", { className: "upload-resume" }, el("div", { text: "上传简历" }), resumeFile));
   const personalSelect = select(doc);
   const hometownSelect = select(doc, ["北京", "上海"]);
+  const birthdayDate = dateSelect(doc, "day");
   group(doc, "个人信息", "personal", [
     formItem("姓名", input()),
     formItem("性别", el("div", {}, ...radioGroup(["男", "女"]))),
     formItem("证件照", el("div", { className: "file-uploader__wrapper" }, el("input", { type: "file", style: { display: "none" } }))),
+    formItem("出生日期", birthdayDate.component),
     formItem("籍贯", hometownSelect.component),
     formItem("最高学历", personalSelect.component),
   ]);
   const schoolOne = input();
-  const startOne = select(doc, ["2024年09月", "2025年09月"]);
+  const startOne = dateSelect(doc, "month");
   const educationOne = group(doc, "教育经历", "education_0", [formItem("学校名称", schoolOne), formItem("开始时间", startOne.component), el("input", { type: "checkbox" }), el("span", { text: "至今" })]);
   const schoolTwo = input();
   group(doc, "教育经历", "education_1", [formItem("学校名称", schoolTwo)]);
@@ -239,7 +323,7 @@ function buildFixture() {
   doc.body.append(el("div", { className: "statement" }, el("span", { text: "声明：以上所填均属本人实际情况" }), declaration));
   const submit = el("button", { text: "预览并提交" });
   doc.body.append(submit);
-  return { doc, resumeFile, personalSelect, hometownSelect, schoolOne, schoolTwo, startOne, educationOne, declaration, submit };
+  return { doc, resumeFile, personalSelect, hometownSelect, birthdayDate, schoolOne, schoolTwo, startOne, educationOne, declaration, submit };
 }
 
 function loadScript(file, context) {
@@ -288,7 +372,7 @@ function testPlatformEvidenceAndBoundaries(ctx, fixture) {
   assert.equal(NS.beisenFormState({ document: fixture.doc, location: ctx.location }).status, "BEISEN_UNCERTAIN");
   ctx.location.hostname = "flyaitalent.zhiye.com";
   assert.equal(NS.beisenFormState({ document: fixture.doc, location: ctx.location }).status, "BEISEN_FORM_CONFIRMED");
-  assert.equal(fixture.doc.querySelectorAll(".form-item").length, 8);
+  assert.equal(fixture.doc.querySelectorAll(".form-item").length, 9);
 }
 
 function testScanIdentityAndSafety(ctx, fixture) {
@@ -376,6 +460,87 @@ async function testProviderReadWriteVerifyAndCapture(ctx, fixture) {
   assert.equal(await NS.adapterRegistry.invoke("beisen", "clearControl", [highest, { kind: "select" }]), true);
   assert.equal(await NS.adapterRegistry.invoke("beisen", "readControl", [highest, {}]), "");
 
+  const birthday = fields.find((field) => field.label === "出生日期");
+  assert.equal(NS.adapterRegistry.invoke("beisen", "readDate", [birthday, {}]), "");
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "writeControl", [birthday, "2002-02-19", { merged, kind: "date" }]), true);
+  assert.equal(NS.adapterRegistry.invoke("beisen", "readDate", [birthday, {}]), "2002.02.19");
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "verifyDate", [birthday, "2002-02-19", { merged }]), true);
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "clearControl", [birthday, { kind: "date" }]), true);
+  assert.equal(NS.adapterRegistry.invoke("beisen", "readDate", [birthday, {}]), "");
+
+  const educationStart = fields.find((field) => field.label === "开始时间");
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "writeControl", [educationStart, "2024-09", { merged, kind: "date" }]), true);
+  assert.equal(NS.adapterRegistry.invoke("beisen", "readDate", [educationStart, {}]), "2024.09");
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "verifyDate", [educationStart, "2024-09", { merged }]), true);
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "clearDate", [educationStart, {}]), true);
+
+  const missingDate = dateSelect(fixture.doc, "month", { months: ["8"] });
+  fixture.doc.body.append(missingDate.component);
+  const missingDateField = NS.adapterRegistry.normalizeField({
+    provider: "beisen", label: "开始时间", rawLabel: "开始时间", section: "教育经历", sectionKey: "education", kind: "date",
+    controls: [missingDate.input], selectComponents: [missingDate.component], selectControls: [missingDate.input], textControls: [],
+    repeater: { itemIndex: 0, itemElement: null },
+  }, { providerKey: "beisen", mergedRules: merged });
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "writeControl", [missingDateField, "2024-09", { merged, kind: "date" }]), false);
+  const missingPopup = fixture.doc.querySelector(".phoenix-date-picker__wrap");
+  if (missingPopup) missingPopup.remove();
+  missingDate.component.classList.remove("phoenix-select--active");
+
+  const duplicateDate = dateSelect(fixture.doc, "month", { months: ["9", "9"] });
+  fixture.doc.body.append(duplicateDate.component);
+  const duplicateDateField = Object.assign({}, missingDateField, {
+    controls: [duplicateDate.input], selectComponents: [duplicateDate.component], selectControls: [duplicateDate.input],
+  });
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "writeControl", [duplicateDateField, "2024-09", { merged, kind: "date" }]), false);
+  const duplicateDatePopup = fixture.doc.querySelector(".phoenix-date-picker__wrap");
+  if (duplicateDatePopup) duplicateDatePopup.remove();
+  duplicateDate.component.classList.remove("phoenix-select--active");
+
+  const multiDateA = dateSelect(fixture.doc, "month");
+  const multiDateB = dateSelect(fixture.doc, "month");
+  fixture.doc.body.append(multiDateA.component, multiDateB.component);
+  multiDateA.component.click();
+  multiDateB.component.click();
+  const multiDateField = Object.assign({}, missingDateField, {
+    controls: [multiDateA.input], selectComponents: [multiDateA.component], selectControls: [multiDateA.input],
+  });
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "writeControl", [multiDateField, "2024-09", { merged, kind: "date" }]), false);
+  while (fixture.doc.querySelector(".phoenix-date-picker__wrap")) fixture.doc.querySelector(".phoenix-date-picker__wrap").remove();
+  multiDateA.component.classList.remove("phoenix-select--active");
+  multiDateB.component.classList.remove("phoenix-select--active");
+
+  const internship0 = { label: "单位名称", rawLabel: "单位名称", section: "实习经历", sectionKey: "internship", kind: "text", repeater: { itemIndex: 0, itemElement: null } };
+  const internship1 = { label: "单位名称", rawLabel: "单位名称", section: "实习经历", sectionKey: "internship", kind: "text", repeater: { itemIndex: 1, itemElement: null } };
+  assert.equal(NS.resolvePath(internship0, merged), "internship[0].company");
+  assert.equal(NS.resolvePath(internship1, merged), "internship[1].company");
+  for (const [label, field] of [["职位名称", "title"], ["开始时间", "start"], ["结束时间", "end"], ["实习内容", "desc"]]) {
+    assert.equal(NS.resolvePath({ label, section: "实习经历", sectionKey: "internship", kind: "text", repeater: { itemIndex: 0, itemElement: null } }, merged), `internship[0].${field}`);
+    assert.equal(NS.resolvePath({ label, section: "实习经历", sectionKey: "internship", kind: "text", repeater: { itemIndex: 1, itemElement: null } }, merged), `internship[1].${field}`);
+  }
+  assert.equal(NS.resolvePath({ label: "单位名称", section: "其他经历", kind: "text" }, merged), null);
+
+  const awardOptions = select(fixture.doc, ["班组级", "院校级", "县市级", "省区级", "国家级", "国际级", "公司级", "集团级"]);
+  fixture.doc.body.append(awardOptions.component);
+  const awardField = NS.adapterRegistry.normalizeField({
+    provider: "beisen", label: "获奖级别", rawLabel: "获奖级别", section: "获奖情况", sectionKey: "award", kind: "select",
+    controls: [awardOptions.input], selectComponents: [awardOptions.component], selectControls: [awardOptions.input], textControls: [],
+    repeater: { itemIndex: 0, itemElement: null },
+  }, { providerKey: "beisen", mergedRules: merged });
+  assert.equal(NS.toOptionText(merged, "省级"), "省区级");
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "writeControl", [awardField, "省级", { merged, kind: "select" }]), true);
+  assert.equal(NS.adapterRegistry.invoke("beisen", "readControl", [awardField, {}]), "省区级");
+  awardOptions.component.remove();
+
+  const missingAwardOptions = select(fixture.doc, ["国家级"]);
+  fixture.doc.body.append(missingAwardOptions.component);
+  const missingAwardField = Object.assign({}, awardField, {
+    controls: [missingAwardOptions.input], selectComponents: [missingAwardOptions.component], selectControls: [missingAwardOptions.input],
+  });
+  assert.equal(await NS.adapterRegistry.invoke("beisen", "writeControl", [missingAwardField, "省级", { merged, kind: "select" }]), false);
+  missingAwardOptions.component.remove();
+  const missingAwardPopup = fixture.doc.querySelector(".phoenix-selectList");
+  if (missingAwardPopup) missingAwardPopup.remove();
+
   const name = fields.find((field) => field.label === "姓名");
   name.textControls[0].value = "已有值";
   const result = await NS.executePlan([{ field: name, kind: "text", path: "basicInfo.name", value: "不应覆盖" }], merged, { delayMs: 0, adapterRegistry: NS.adapterRegistry, providerKey: "beisen" });
@@ -387,11 +552,13 @@ async function testProviderReadWriteVerifyAndCapture(ctx, fixture) {
   assert.equal(snapshot.basicInfo.name, "已有值");
 
   const duplicateSelect = select(fixture.doc, ["本科", "本科"]);
+  fixture.doc.body.append(duplicateSelect.component);
   const duplicateField = NS.adapterRegistry.normalizeField({
     provider: "beisen", label: "最高学历", rawLabel: "最高学历", section: "个人信息", kind: "select",
     controls: [duplicateSelect.input], selectComponents: [duplicateSelect.component], selectControls: [duplicateSelect.input], textControls: [],
   }, { providerKey: "beisen", mergedRules: merged });
   assert.equal(await NS.adapterRegistry.invoke("beisen", "writeControl", [duplicateField, "本科", { merged, kind: "select" }]), false);
+  duplicateSelect.component.remove();
   assert.equal(await NS.adapterRegistry.invoke("beisen", "clearControl", [{ kind: "unknown", controls: [] }, {}]), false);
   assert.equal(await NS.adapterRegistry.invoke("beisen", "clearControl", [{ kind: "file", manualOnly: true, controls: [] }, {}]), false);
 }
