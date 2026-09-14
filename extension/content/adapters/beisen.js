@@ -219,12 +219,19 @@
     return null;
   }
 
-  function kindOf(label, parts) {
+  function kindOf(label, parts, section) {
     if (parts.fileControls.length) return "file";
     if (parts.radioControls.length) return "radio";
     if (parts.checkbox && parts.controls.length === 1) return "checkbox";
     if (parts.textControls.some((element) => String(element.tagName || "").toUpperCase() === "TEXTAREA")) return "textarea";
-    if (parts.selectControls.length && !parts.textControls.length) return DATE_LABELS.has(normalize(label)) ? "date" : "select";
+    if (parts.selectControls.length && !parts.textControls.length) {
+      // `籍贯` is a provider-confirmed area selector, not an ordinary Phoenix
+      // option list. Keep the special kind scoped to this exact flat field.
+      if (normalize(section) === "个人信息" && normalize(label) === "籍贯") return "search-select";
+      // Date is the semantic field kind. The actual picker variant is derived
+      // only after opening the current control's popup (see dateVariantOf).
+      return DATE_LABELS.has(normalize(label)) ? "date" : "select";
+    }
     if (parts.textControls.length) return parts.textControls.some((element) => String(element.tagName || "").toUpperCase() === "TEXTAREA") ? "textarea" : "text";
     return "unknown";
   }
@@ -256,9 +263,9 @@
     const parts = controlParts(item);
     const info = sectionInfoForElement(item);
     const repeater = repeaterFor(item, context, info);
-    const kind = kindOf(labels.label, parts);
+    const kind = kindOf(labels.label, parts, info.section);
     const itemIndex = repeater.itemIndex == null ? null : repeater.itemIndex;
-    return {
+    const descriptor = {
       provider: "beisen",
       section: info.section,
       sectionKey: info.sectionKey === "_flat" ? null : info.sectionKey,
@@ -281,6 +288,17 @@
       checkbox: parts.checkbox,
       fileControls: parts.fileControls,
     };
+    if (kind === "search-select" && info.section === "个人信息" && labels.label === "籍贯") {
+      descriptor.controlVariant = "area-selector";
+    }
+    if (kind === "radio" && info.section === "个人信息" && labels.label === "是否全日制") {
+      // This is a provider default, not a Schema/global alias. It is only
+      // offered when the exact real-form field is empty and remains subject to
+      // the normal existing-value guard and double readback verification.
+      descriptor.defaultValue = "是";
+      descriptor.defaultAnswer = "是";
+    }
+    return descriptor;
   }
 
   function safetyDescriptor(label, section, kind, element, extra) {
@@ -422,10 +440,11 @@
     return parsed.d == null ? base : `${base}.${String(parsed.d).padStart(2, "0")}`;
   }
 
-  function dateMatches(actual, expected) {
+  function dateMatches(actual, expected, variant) {
     const a = dateParts(actual);
     const e = dateParts(expected);
     if (!a || !e || a.y !== e.y || String(Number(a.m)) !== String(Number(e.m))) return false;
+    if (variant === "month-picker") return true;
     return e.d == null || (a.d != null && String(Number(a.d)) === String(Number(e.d)));
   }
 
@@ -451,6 +470,164 @@
 
   function visibleElements(root, selector) {
     return qsa(root, selector).filter(isVisible);
+  }
+
+  function normalizedLocation(value) {
+    return normalize(String(value || "")).replace(/[>\\/、,，]/g, "");
+  }
+
+  function locationSearchTerm(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const pieces = raw.split(/[\s>\/、,，]+/).filter(Boolean);
+    if (pieces.length > 1) return pieces[pieces.length - 1];
+    // The real sample uses a compact path such as 省 + 市. Prefer the last
+    // administrative unit instead of searching the whole concatenated path.
+    const compact = raw.match(/(?:省|自治区|自治州|地区|盟)([^省市县区旗盟州]+(?:市|县|区|旗|盟|州))$/);
+    return compact ? compact[1] : raw;
+  }
+
+  function locationItemName(item) {
+    return textOf(first(item, ".area-text-label") || first(item, ".area-item-name") || item);
+  }
+
+  function locationItemPath(item) {
+    return textOf(first(item, ".area-item-path"));
+  }
+
+  function locationItemFullText(item) {
+    return `${locationItemPath(item)}${locationItemName(item)}`;
+  }
+
+  function locationItemSelected(item) {
+    const classes = classText(item);
+    if (/(selected|checked|active)/i.test(classes)) return true;
+    return Boolean(first(item, ".area-icon-RadioChecked, .area-icon-RadioCheckedDisabled, [aria-checked=\"true\"], [data-selected=\"true\"]"));
+  }
+
+  function setTextValue(input, value) {
+    if (!input) return false;
+    try {
+      const proto = String(input.tagName || "").toUpperCase() === "TEXTAREA"
+        ? (typeof HTMLTextAreaElement !== "undefined" && HTMLTextAreaElement.prototype)
+        : (typeof HTMLInputElement !== "undefined" && HTMLInputElement.prototype);
+      const descriptor = proto && Object.getOwnPropertyDescriptor(proto, "value");
+      if (descriptor && descriptor.set) descriptor.set.call(input, String(value));
+      else input.value = String(value);
+      if (typeof NS.emitInputEvents === "function") NS.emitInputEvents(input);
+      else if (input.dispatchEvent && typeof Event !== "undefined") {
+        input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      }
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function locationPopupFor(doc, component) {
+    if (!doc || !component || !activeComponent(doc, component)) return null;
+    const containers = visibleElements(doc, ".area-selector-container").filter((container) => Boolean(closest(container, ".common-unmodeled-layer")));
+    if (containers.length !== 1) return null;
+    const container = containers[0];
+    const root = closest(container, ".common-unmodeled-layer") || container;
+    const searches = visibleElements(root, 'input[placeholder="搜索"]');
+    if (searches.length !== 1) return null;
+    return { root, container, search: searches[0] };
+  }
+
+  async function openLocationPopup(field, context) {
+    const doc = docOf(context);
+    const component = componentFor(field);
+    if (!doc || !component || !dispatchClick(component)) return null;
+    return waitForValue(() => locationPopupFor(doc, component), 40);
+  }
+
+  function locationCandidates(popup, term, expected) {
+    if (!popup) return [];
+    const normalizedTerm = normalize(term);
+    const normalizedExpected = normalizedLocation(expected);
+    return visibleElements(popup.container, ".area-item-container").filter((item) => {
+      if (normalize(locationItemName(item)) !== normalizedTerm) return false;
+      if (!normalizedExpected) return true;
+      const full = normalizedLocation(locationItemFullText(item));
+      return full === normalizedExpected || normalizedLocation(locationItemName(item)) === normalizedExpected;
+    });
+  }
+
+  function exactTextNodes(root, selector, value) {
+    const want = normalize(value);
+    return visibleElements(root, selector).filter((element) => normalize(textOf(element)) === want);
+  }
+
+  function locationSelectionCount(popup) {
+    const text = normalize(textOf(popup && popup.container));
+    const match = text.match(/已选地区(\d+)\/(\d+)/);
+    return match ? Number(match[1]) : null;
+  }
+
+  function readLocation(field) {
+    return selectShownText(field);
+  }
+
+  function locationMatches(actual, expected) {
+    const a = normalizedLocation(actual);
+    const e = normalizedLocation(expected);
+    return Boolean(a && e && a === e);
+  }
+
+  async function writeLocation(field, value, context) {
+    const expected = String(value || "").trim();
+    const term = locationSearchTerm(expected);
+    if (!expected || !term) return false;
+    const popup = await openLocationPopup(field, context || {});
+    if (!popup || !setTextValue(popup.search, term)) {
+      closePopup(docOf(context));
+      return false;
+    }
+    const found = await waitForValue(() => {
+      const matches = locationCandidates(popup, term, expected);
+      return matches.length ? matches : null;
+    }, 40);
+    if (!found || found.length !== 1 || !dispatchClick(found[0])) {
+      closePopup(docOf(context));
+      return false;
+    }
+    const selected = await waitForValue(() => {
+      const count = locationSelectionCount(popup);
+      return count === 1 || locationItemSelected(found[0]) ? true : null;
+    }, 30);
+    if (!selected) {
+      closePopup(docOf(context));
+      return false;
+    }
+    const confirm = exactTextNodes(popup.root, ".phoenix-button__content, button, [role=\"button\"]", "确定");
+    if (confirm.length !== 1 || !dispatchClick(confirm[0])) {
+      closePopup(docOf(context));
+      return false;
+    }
+    const closed = await waitForValue(() => locationPopupFor(docOf(context), componentFor(field)) ? null : true, 30);
+    if (!closed) return false;
+    return Boolean(await waitForValue(() => locationMatches(readLocation(field), expected) ? true : null, 30));
+  }
+
+  async function clearLocation(field, context) {
+    const current = readLocation(field);
+    if (!current) return true;
+    const component = componentFor(field);
+    const clear = component && first(component, ".phoenix-select__clearIcon");
+    if (clear && isVisible(clear) && dispatchClick(clear)) {
+      return Boolean(await waitForValue(() => !readLocation(field) ? true : null, 30));
+    }
+    const popup = await openLocationPopup(field, context || {});
+    if (!popup) return false;
+    const clearButtons = exactTextNodes(popup.root, ".area-footer-button, .phoenix-button__content, button, [role=\"button\"], [class*=\"clear\"], [class*=\"Clear\"]", "清空已选");
+    const confirm = exactTextNodes(popup.root, ".phoenix-button__content, button, [role=\"button\"]", "确定");
+    if (clearButtons.length !== 1 || confirm.length !== 1 || !dispatchClick(clearButtons[0]) || !dispatchClick(confirm[0])) {
+      closePopup(docOf(context));
+      return false;
+    }
+    return Boolean(await waitForValue(() => !readLocation(field) ? true : null, 30));
   }
 
   function activeComponent(doc, component) {
@@ -491,11 +668,30 @@
     });
   }
 
-  function popupMode(popup) {
+  function dateVariantOf(popup) {
     if (!popup) return null;
-    if (visibleElements(popup, ".phoenix-calendar-month-panel").length === 1) return "month";
-    if (visibleElements(popup, ".phoenix-calendar-table").length === 1) return "day";
+    const monthPanels = visibleElements(popup, ".phoenix-calendar-month-panel");
+    const dayTables = visibleElements(popup, ".phoenix-calendar-table");
+    if (monthPanels.length === 1 && dayTables.length === 0) return "month-picker";
+    if (dayTables.length === 1 && monthPanels.length === 0) return "date-picker";
     return null;
+  }
+
+  function pickerMode(variant) {
+    if (variant === "month-picker") return "month";
+    if (variant === "date-picker") return "day";
+    return null;
+  }
+
+  // Variant detection is deliberately DOM-based. Labels only tell scanFields
+  // that a field is date-like; they never decide whether it is month-only or
+  // a full date picker.
+  async function detectDateVariant(field, context) {
+    const popup = await openDatePopup(field, context || {});
+    if (!popup) return null;
+    const variant = dateVariantOf(popup);
+    if (!variant) closePopup(docOf(context));
+    return variant ? { popup, variant } : null;
   }
 
   function yearText(value) {
@@ -563,10 +759,19 @@
   async function writeDate(field, value, context) {
     const expected = dateParts(value);
     if (!expected || !expected.y || !expected.m) return false;
-    const popup = await openDatePopup(field, context || {});
-    const mode = popupMode(popup);
+    const detected = await detectDateVariant(field, context || {});
+    const popup = detected && detected.popup;
+    const variant = detected && detected.variant;
+    const mode = pickerMode(variant);
     if (!popup || !mode) return false;
-    if ((mode === "month" && expected.d != null) || (mode === "day" && expected.d == null)) return false;
+    // A full date picker cannot safely invent a day from a month-only value.
+    // A month picker may receive a value that also contains a day; the page's
+    // confirmed precision wins and readback verifies only year/month.
+    if (mode === "day" && expected.d == null) {
+      closePopup(docOf(context));
+      return false;
+    }
+    field._beisenDateVariant = variant;
     if (!await chooseDateYear(popup, expected.y, mode)) {
       closePopup(docOf(context));
       return false;
@@ -575,8 +780,11 @@
       closePopup(docOf(context));
       return false;
     }
-    if (mode === "day" && !chooseDateDay(popup, expected.d)) return false;
-    const verified = await waitForValue(() => dateMatches(readDate(field), value) ? true : null, 20);
+    if (mode === "day" && !chooseDateDay(popup, expected.d)) {
+      closePopup(docOf(context));
+      return false;
+    }
+    const verified = await waitForValue(() => dateMatches(readDate(field), value, variant) ? true : null, 20);
     return Boolean(verified);
   }
 
@@ -630,6 +838,7 @@
       return input ? String(input.value || "").trim() : "";
     }
     if (field.kind === "select") return selectShownText(field);
+    if (field.kind === "search-select" && field.controlVariant === "area-selector") return readLocation(field);
     if (field.kind === "date") return readDate(field);
     if (field.kind === "radio") return readRadio(field);
     if (field.kind === "checkbox") return Boolean(field.checkbox && field.checkbox.checked);
@@ -688,7 +897,8 @@
     const kind = (context && context.kind) || field.kind;
     if (kind === "text" || kind === "textarea") return String(actual).trim() === String(value).trim();
     if (kind === "select" || kind === "radio") return normalize(actual) === normalize(NS.toOptionText ? NS.toOptionText(context && context.merged || {}, value) : value);
-    if (kind === "date") return dateMatches(actual, value);
+    if (kind === "search-select" && field && field.controlVariant === "area-selector") return locationMatches(actual, value);
+    if (kind === "date") return dateMatches(actual, value, field && field._beisenDateVariant);
     if (kind === "checkbox") return Boolean(actual) === Boolean(value);
     return false;
   }
@@ -784,6 +994,7 @@
         return Boolean(NS.writeControlCore && await NS.writeControlCore(field, value, Object.assign({}, context || {}, { kind })));
       }
       if (kind === "select") return pickFromPopup(field, value, context || {});
+      if (kind === "search-select" && field.controlVariant === "area-selector") return writeLocation(field, value, context || {});
       if (kind === "date") return writeDate(field, value, context || {});
       if (kind === "radio") return writeRadio(field, value, context || {});
       return false;
@@ -797,6 +1008,14 @@
       return verifyControl(field, value, Object.assign({}, context || {}, { kind: "date" }));
     },
 
+    readLocation(field) {
+      return readLocation(field);
+    },
+
+    verifyLocation(field, value, context) {
+      return verifyControl(field, value, Object.assign({}, context || {}, { kind: "search-select", controlVariant: "area-selector" }));
+    },
+
     async clearControl(field, context) {
       if (!field || field.manualOnly || field.safetyRole) return false;
       const kind = (context && context.kind) || field.kind;
@@ -804,12 +1023,17 @@
         return Boolean(NS.clearControlCore && await NS.clearControlCore(field, Object.assign({}, context || {}, { kind })));
       }
       if (kind === "select") return clearSelect(field, context || {});
+      if (kind === "search-select" && field.controlVariant === "area-selector") return clearLocation(field, context || {});
       if (kind === "date") return clearDate(field, context || {});
       return false;
     },
 
     clearDate(field, context) {
       return clearDate(field, context || {});
+    },
+
+    clearLocation(field, context) {
+      return clearLocation(field, context || {});
     },
 
     // Add buttons are visible in the real sample, but auto-add is deliberately

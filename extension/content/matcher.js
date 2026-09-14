@@ -80,10 +80,18 @@
   NS.resolvePath = function (f, merged) {
     if (!f.label) return null;
     const label = NS.normalizeLabel(f.label);
-    if (BLOCKED_AMBIGUOUS_LABELS.has(label)) return null;
     const section = NS.normalizeLabel(f.section);
     const block = merged._n.sectionAliases[NS.normalizeLabel(f.section)];
+    const providerAlias = merged._n.providerAliases[label];
     const canonical = (path) => NS.canonicalPath ? NS.canonicalPath(path) : path;
+
+    // Ambiguous location labels remain blocked unless the active provider has
+    // an explicit alias in a known flat section. This keeps the Beisen
+    // `个人信息 / 籍贯` rule narrow without restoring a global guess.
+    const providerAmbiguousOverride = block === "_flat"
+      && section === NS.normalizeLabel("个人信息")
+      && providerAlias;
+    if (BLOCKED_AMBIGUOUS_LABELS.has(label) && !providerAmbiguousOverride) return null;
     if (block && block !== "_flat") {
       const alias = (merged._n.scopedAliases[block] || {})[label];
       if (!alias) return null;
@@ -137,6 +145,18 @@
     return "控件类型不明确，跳过";
   }
 
+  function defaultValueOf(field) {
+    if (!field || typeof field !== "object") return undefined;
+    if (Object.prototype.hasOwnProperty.call(field, "defaultValue")) return field.defaultValue;
+    if (Object.prototype.hasOwnProperty.call(field, "defaultAnswer")) return field.defaultAnswer;
+    return undefined;
+  }
+
+  function hasDefaultValue(field) {
+    const value = defaultValueOf(field);
+    return value !== undefined && value !== null && String(value).trim() !== "";
+  }
+
   // fields: scanner 产物；返回 {plan, unmatched, noData, manual}
   // plan item: {field, kind, path, value}  value 依 kind 而定
   NS.buildPlan = function (fields, merged, snapshot) {
@@ -162,6 +182,14 @@
       }
       let value, kind = f.kind;
 
+      // Provider-scoped defaults are intentionally pathless. They are still
+      // ordinary plan items, so the Writer can apply its existing-value guard
+      // and the normal stable double-read verification.
+      if (!path && hasDefaultValue(f)) {
+        plan.push({ field: f, kind, path: null, value: defaultValueOf(f), defaultAnswer: true });
+        continue;
+      }
+
       if (path) {
         if (path.endsWith(".start~end")) {
           const block = path.slice(0, path.indexOf("["));
@@ -177,6 +205,10 @@
 
       if (!path) { unmatched.push({ field: f, reason: "无匹配规则" }); continue; }
       if (value == null || value === "" || (typeof value === "object" && !value.start && !value.end)) {
+        if (hasDefaultValue(f)) {
+          plan.push({ field: f, kind, path, value: defaultValueOf(f), defaultAnswer: true });
+          continue;
+        }
         noData.push({ field: f, path });
         continue;
       }

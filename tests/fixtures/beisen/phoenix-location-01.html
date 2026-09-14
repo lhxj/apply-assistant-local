@@ -1,0 +1,35 @@
+<!--
+  BEISEN_REAL_SAMPLE_01 籍贯搜索弹层的最小脱敏 fixture。
+  只保留真实样本确认的 wrapper、搜索框、候选路径和确认按钮。
+-->
+<div class="form-item form-item--phoenix">
+  <div class="form-item__title"><span class="form-item__text">* 籍贯</span></div>
+  <div class="form-item__control">
+    <div class="phoenix-select phoenix-select--active">
+      <input class="phoenix-select__input" value="">
+      <div class="phoenix-select__placeHolder">请选择</div>
+    </div>
+  </div>
+</div>
+<div class="common-unmodeled-layer">
+  <div class="common-unmodeled-layer__layerContent area-selector-container">
+    <div class="area-search-input">
+      <div class="phoenix-input phoenix-search">
+        <input class="phoenix-input__input phoenix-input__input--hasPrefix" placeholder="搜索" value="">
+      </div>
+    </div>
+    <div class="area-data-container">
+      <div class="area-item-container">
+        <div class="area-item-name">
+          <span class="area-text-label no-hover">地区名称</span>
+        </div>
+        <div class="area-item-path">省级路径</div>
+      </div>
+    </div>
+    <div class="area-footer-button">
+      <div class="area-clear-selected">清空已选</div>
+      <div class="phoenix-button__content">取消</div>
+      <div class="phoenix-button__content">确定</div>
+    </div>
+  </div>
+</div>

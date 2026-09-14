@@ -82,12 +82,15 @@ Provider Adapter 不应修改全局 `NS` 的匹配规则，也不应绕过 Core 
   label: "学校",
   rawLabel: "学校（必填）",
   kind: "text" | "textarea" | "select" | "search-select" | "radio" | "checkbox" | "date" | "range" | "file" | "unknown",
+  controlVariant: "area-selector" | string | undefined,
   container: HTMLElement | null,
   controls: HTMLElement[],
   required: true | false | null,
   confidence: 0.0
 }
 ```
+
+`controlVariant` 是运行时的控件变体提示，不是 Schema path。当前北森只为真实样本确认的 `个人信息 / 籍贯` 使用 `search-select + area-selector`。Provider 默认值也只作为运行时 FieldDescriptor 的 `defaultValue`/`defaultAnswer`，不写入 global alias 或 Snapshot；仍经过已有值保护和稳定双回读。
 
 当前 `scanner.js` 不重写。它只额外暴露现有容器发现函数作为 Generic 的兼容入口；`NS.adapterRegistry.normalizeField(s)` 将旧字段结果转换为上述兼容结构，并保留 `index`、`textControls`、`selectControls` 等旧字段供 Round 1/2 Core 使用。已知 Schema v2 重复区块的旧 `index` 只作为过渡性的 `itemIndex`；后续 Moka/北森 Adapter 必须从真实 repeater item 提供准确的 `itemIndex` 和 `itemElement`。
 
@@ -99,7 +102,7 @@ Generic 保留当前通用 scanner 结果的字段级行为：控件分类、读
 
 当前主流程统一通过 `adapterRegistry.scanFields()` 获取并规范化扫描结果，不再直接调用 `NS.scanFields()`。填写、读取和验证通过 Registry 传给 Writer；更新 Snapshot 的读取通过 `adapterRegistry.captureControl()` 传给 learn.js；清空通过 `adapterRegistry.clearControl()` 传给 Writer。Matcher 仍负责 Schema/canonical path，Writer 仍负责节奏、控件动作和至少两次稳定回读。
 
-Generic 的 `captureControl()` 保留现有 `captureValue()` 行为；Generic 的 `clearControl()` 保留通用安全清空能力。`file`、`unknown` 和其他不支持的 kind 返回失败，不会被计为已清空。空壳 Moka 不实现这些方法，自动回退 Generic；Beisen 对本样本确认的 Phoenix text/textarea/select/date/radio/checkbox 提供 provider-first 处理，file、声明、提交、验证码仍 manual-only。
+Generic 的 `captureControl()` 保留现有 `captureValue()` 行为；Generic 的 `clearControl()` 保留通用安全清空能力。`file`、`unknown` 和其他不支持的 kind 返回失败，不会被计为已清空。空壳 Moka 不实现这些方法，自动回退 Generic；Beisen 对本样本确认的 Phoenix text/textarea/select/search-select/date/radio/checkbox 提供 provider-first 处理，file、声明、提交、验证码仍 manual-only。`search-select` 只有 Provider 明确声明并证明 `controlVariant` 后才可操作，Generic 不会把它当普通 text/select。
 
 `manualOnly === true` 是 Matcher 的第一优先级安全门：字段直接进入 `manual`，不会解析 alias、读取 Snapshot 或进入 `plan`。可选的 `manualReason` 优先作为人工原因；缺失时使用通用原因。该能力适用于所有 Provider，不是 Beisen 专属规则。
 
@@ -181,6 +184,7 @@ tests/beisen-adapter.test.js
 
 - `BEISEN_REAL_SAMPLE_01`：`flyaitalent.zhiye.com/form`，只保存 hostname/path/query key，不保存 query value 或表单个人数据。
 - sample-confirmed：`.form-item` 字段边界、`.form-item__text` 标签、`.form-item__control` 控件容器、Phoenix select/radio/textarea/file 结构、`div.form[id*="Recruitment_extPerfect"]` 重复组、body portal 下的 `.phoenix-selectList__listItem` 候选。
+- sample-confirmed：北森籍贯弹层的 `common-unmodeled-layer` / `area-selector-container` / `area-search-input` / `area-item-container` / `area-text-label` / `area-item-path` 与“确定”按钮关系；获奖时间和证书获得时间使用完整 `phoenix-calendar-table`，教育开始时间使用 `phoenix-calendar-month-panel`。
 - 保守推断：同一 section 的 DOM 顺序用于当前运行时 `itemIndex`；后续仍需第二个北森站点和新增/删除后的样本复核。
 - 未确认：cascader、验证码、错误态、已选 radio 的真实 class 变体、已填日期/下拉的全部回读格式。未确认内容不自动升级为可填写规则。
 - Generic 的 `ensureItemCount` 和所有 Adapter 的 `addItem` 仍关闭。

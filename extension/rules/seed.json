@@ -95,7 +95,8 @@
       "aliases": {
         "意向工作地点": "intent.cities",
         "意向工作地": "intent.cities",
-        "期望从事职业": "intent.position"
+        "期望从事职业": "intent.position",
+        "籍贯": "basicInfo.nativePlace"
       },
       "sectionAliases": {
         "技能": "skills",
